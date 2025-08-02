@@ -70,8 +70,8 @@ var allCubes = Object.FindObjectsOfType<Transform>()
 
 1. Клонируйте репозиторий:
 ```bash
-git clone https://github.com/your-username/unity-mcp-template.git
-cd unity-mcp-template
+git clone git@github.com:HuntNight/unity-mcp-advanced.git
+cd unity-mcp-advanced
 ```
 
 2. Установите зависимости:
@@ -334,9 +334,9 @@ MIT License - смотрите [LICENSE](LICENSE) файл для деталей
 
 ## 📞 Поддержка
 
-- 🐛 **Баги**: [GitHub Issues](https://github.com/your-username/unity-mcp-template/issues)
-- 💡 **Идеи**: [GitHub Discussions](https://github.com/your-username/unity-mcp-template/discussions)  
-- 📧 **Email**: your-email@domain.com
+- 🐛 **Баги**: [GitHub Issues](https://github.com/HuntNight/unity-mcp-advanced/issues)
+- 💡 **Идеи**: [GitHub Discussions](https://github.com/HuntNight/unity-mcp-advanced/discussions)  
+- 📧 **Email**: nikita@kolobov.dev
 
 ---
 
