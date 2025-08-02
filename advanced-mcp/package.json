@@ -1,0 +1,27 @@
+{
+  "name": "claude-enhanced-mcp",
+  "version": "1.0.0",
+  "description": "Набор MCP утилит",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'No build needed for simple JS'",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.3",
+    "axios": "^1.9.0",
+    "form-data": "^4.0.3",
+    "screenshot-desktop": "^1.15.1"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "enhanced",
+    "utilities",
+    "unity",
+    "terminal"
+  ],
+  "author": "Claude MCP Tools",
+  "license": "MIT"
+}

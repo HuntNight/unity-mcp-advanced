@@ -1,0 +1,26 @@
+{
+  "name": "com.unity-bridge",
+  "version": "1.0.0",
+  "displayName": "Unity Bridge",
+  "description": "Революционный мост MCP к Unity Editor. Позволяет управлять Unity в реальном времени через MCP инструменты - создавать объекты, делать скриншоты, вызывать любые Unity API через рефлексию.",
+  "unity": "2022.3",
+  "unityRelease": "0f1",
+  "dependencies": {
+    "com.unity.ugui": "1.0.0"
+  },
+  "keywords": [
+    "AI",
+    "MCP",
+    "Automation",
+    "API",
+    "Bridge",
+    "Editor",
+    "Tools"
+  ],
+  "author": {
+    "name": "Nikita Kolobov",
+    "url": "https://kolobov.dev"
+  },
+  "type": "tool",
+  "hideInEditor": false
+} 
