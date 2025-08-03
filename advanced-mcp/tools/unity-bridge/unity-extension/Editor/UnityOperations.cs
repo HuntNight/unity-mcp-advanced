@@ -86,39 +86,67 @@ namespace UnityBridge
                 var provider = new Microsoft.CSharp.CSharpCodeProvider();
                 var parameters = new System.CodeDom.Compiler.CompilerParameters();
                 
-                parameters.ReferencedAssemblies.Add("mscorlib.dll");
-                parameters.ReferencedAssemblies.Add("System.dll");
-                parameters.ReferencedAssemblies.Add("System.Core.dll");
-                parameters.ReferencedAssemblies.Add(typeof(UnityEngine.GameObject).Assembly.Location);
-                parameters.ReferencedAssemblies.Add(typeof(UnityEditor.EditorWindow).Assembly.Location);
+                // Используем HashSet для предотвращения дублирования ассемблий
+                var addedAssemblies = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+                
+                // Добавляем ТОЛЬКО самые необходимые ассемблии
+                // Основные системные ассемблии
+                AddAssemblyIfNotExists(parameters, addedAssemblies, "mscorlib.dll");
+                AddAssemblyIfNotExists(parameters, addedAssemblies, "System.dll");
+                AddAssemblyIfNotExists(parameters, addedAssemblies, "System.Core.dll");
+                
+                // Добавляем netstandard для решения CS0012 ошибок
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        var name = asm.GetName().Name;
+                        if (name == "netstandard" && !string.IsNullOrEmpty(asm.Location))
+                        {
+                            AddAssemblyIfNotExists(parameters, addedAssemblies, asm.Location);
+                            break;
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+                
+                // Основные Unity ассемблии
+                AddAssemblyIfNotExists(parameters, addedAssemblies, typeof(UnityEngine.GameObject).Assembly.Location);
+                AddAssemblyIfNotExists(parameters, addedAssemblies, typeof(UnityEditor.EditorWindow).Assembly.Location);
+                
+                // Добавляем ТОЛЬКО базовые Unity ассемблии по белому списку
+                var allowedUnityAssemblies = new[] {
+                    "UnityEngine.CoreModule",
+                    "UnityEngine.IMGUIModule", 
+                    "UnityEngine.PhysicsModule",
+                    "UnityEngine.AnimationModule",
+                    "UnityEngine.AudioModule",
+                    "UnityEngine.ParticleSystemModule",
+                    "UnityEngine.TerrainModule",
+                    "UnityEngine.UIModule",
+                    "UnityEngine.TextRenderingModule",
+                    "UnityEngine.UIElementsModule",
+                    "UnityEditor.CoreModule"
+                };
                 
                 foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
                 {
                     try
                     {
                         var name = asm.GetName().Name;
-                        if ((name.StartsWith("UnityEngine") || name.StartsWith("UnityEditor")) 
-                            && !string.IsNullOrEmpty(asm.Location))
+                        var location = asm.Location;
+                        
+                        // Добавляем только из белого списка Unity ассемблий
+                        if (allowedUnityAssemblies.Contains(name) && !string.IsNullOrEmpty(location))
                         {
-                            parameters.ReferencedAssemblies.Add(asm.Location);
+                            AddAssemblyIfNotExists(parameters, addedAssemblies, location);
                         }
                     }
                     catch { /* ignore */ }
                 }
                 
-                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        var name = asm.GetName().Name;
-                        if ((name.StartsWith("System") || name.StartsWith("mscorlib") || name == "netstandard") 
-                            && !string.IsNullOrEmpty(asm.Location))
-                        {
-                            parameters.ReferencedAssemblies.Add(asm.Location);
-                        }
-                    }
-                    catch { /* ignore */ }
-                }
+                // ВАЖНО: НЕ добавляем дополнительные System ассемблии чтобы избежать конфликтов
+                // mscorlib.dll, System.dll и System.Core.dll достаточно для базовой функциональности
                 
                 parameters.GenerateInMemory = true;
                 parameters.GenerateExecutable = false;
@@ -143,6 +171,51 @@ namespace UnityBridge
             catch (Exception ex)
             {
                 return new CodeExecutionResult { Success = false, ErrorMessage = ex.Message };
+            }
+        }
+        
+        private static void AddAssemblyIfNotExists(System.CodeDom.Compiler.CompilerParameters parameters, 
+            System.Collections.Generic.HashSet<string> addedAssemblies, string assemblyPath)
+        {
+            if (string.IsNullOrEmpty(assemblyPath))
+                return;
+                
+            // Нормализуем путь для сравнения
+            var normalizedPath = System.IO.Path.GetFullPath(assemblyPath);
+            
+            if (!addedAssemblies.Contains(normalizedPath))
+            {
+                addedAssemblies.Add(normalizedPath);
+                parameters.ReferencedAssemblies.Add(assemblyPath);
+            }
+        }
+        
+        private static bool ContainsProblematicTypes(System.Reflection.Assembly assembly)
+        {
+            try
+            {
+                var assemblyName = assembly.GetName().Name;
+                
+                // Прямое исключение проблемных ассемблий по имени
+                if (assemblyName == "System.Windows.Forms" ||
+                    assemblyName.Contains("WindowsForms") ||
+                    assemblyName.Contains("Windows.Forms"))
+                {
+                    return true;
+                }
+                
+                // Проверяем наличие System.Windows.Forms или других проблемных типов
+                var types = assembly.GetExportedTypes();
+                return types.Any(t => 
+                    t.Namespace == "System.Windows.Forms" ||
+                    t.FullName == "System.Windows.Forms.SaveFileDialog" ||
+                    t.FullName == "System.Windows.Forms.OpenFileDialog" ||
+                    t.FullName == "System.Windows.Forms.DialogResult");
+            }
+            catch
+            {
+                // Если не можем проверить типы, считаем ассемблию безопасной
+                return false;
             }
         }
         
