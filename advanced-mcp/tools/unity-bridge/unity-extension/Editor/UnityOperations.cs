@@ -557,11 +557,14 @@ public class DynamicCodeExecutor
         {
             try
             {
+                // 1. Попытка захвата через рефлексию Game View
                 var gameViewTexture = TryCaptureGameViewReflection(width, height);
                 if (gameViewTexture != null)
                     return gameViewTexture;
                 
-                return CaptureAllCamerasWithUIEditorMode(width, height);
+                // 2. Если рефлексия не сработала - умный fallback
+                // Создаем временную камеру и показываем всё содержимое сцены
+                return CaptureSceneContentIntelligently(width, height);
             }
             catch (Exception ex)
             {
@@ -770,6 +773,130 @@ public class DynamicCodeExecutor
             }
             
             throw new ArgumentException("Vector3 data must be array of 3 numbers");
+        }
+        
+        /// <summary>
+        /// Умный захват сцены: находит все видимые объекты и располагает камеру для показа всего содержимого
+        /// </summary>
+        private static Texture2D CaptureSceneContentIntelligently(int width, int height)
+        {
+            try
+            {
+                // 1. Найти все видимые Renderer в сцене
+                var allRenderers = UnityEngine.Object.FindObjectsOfType<Renderer>()
+                    .Where(r => r != null && r.enabled && r.gameObject.activeInHierarchy)
+                    .ToList();
+
+                if (allRenderers.Count == 0)
+                {
+                    // Если нет видимых объектов - попробовать старый метод как последний шанс
+                    Debug.LogWarning("No visible renderers found, falling back to camera-based capture");
+                    return CaptureAllCamerasWithUIEditorMode(width, height);
+                }
+
+                // 2. Вычислить общий Bounds всех видимых объектов
+                var combinedBounds = CalculateCombinedBounds(allRenderers);
+                
+                // 3. Создать временную камеру и расположить её оптимально
+                return CaptureWithOptimalCameraPosition(combinedBounds, width, height);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Intelligent scene capture failed: {ex.Message}, falling back to camera-based capture");
+                return CaptureAllCamerasWithUIEditorMode(width, height);
+            }
+        }
+
+        /// <summary>
+        /// Вычисляет объединенный Bounds для списка Renderer'ов
+        /// </summary>
+        private static Bounds CalculateCombinedBounds(List<Renderer> renderers)
+        {
+            if (renderers.Count == 0)
+                return new Bounds(Vector3.zero, Vector3.one);
+
+            var bounds = renderers[0].bounds;
+            
+            for (int i = 1; i < renderers.Count; i++)
+            {
+                bounds.Encapsulate(renderers[i].bounds);
+            }
+
+            // Если bounds слишком маленький, расширяем его
+            var minSize = 1f;
+            if (bounds.size.magnitude < minSize)
+            {
+                bounds.size = Vector3.one * minSize;
+            }
+
+            return bounds;
+        }
+
+        /// <summary>
+        /// Создает временную камеру и располагает её для оптимального захвата Bounds
+        /// </summary>
+        private static Texture2D CaptureWithOptimalCameraPosition(Bounds targetBounds, int width, int height)
+        {
+            var cameraObj = new GameObject("IntelligentScreenshotCamera");
+            var camera = cameraObj.AddComponent<Camera>();
+            
+            try
+            {
+                // Настройка камеры
+                camera.fieldOfView = 60f;
+                camera.aspect = (float)width / height;
+                camera.nearClipPlane = 0.1f;
+                camera.farClipPlane = 1000f;
+                camera.clearFlags = CameraClearFlags.Color;
+                camera.backgroundColor = Color.gray;
+
+                // Вычисляем оптимальную позицию камеры
+                var cameraPosition = CalculateOptimalCameraPosition(targetBounds, camera);
+                camera.transform.position = cameraPosition;
+                camera.transform.LookAt(targetBounds.center);
+
+                // Создаем RenderTexture и захватываем изображение
+                var renderTexture = new RenderTexture(width, height, 24);
+                camera.targetTexture = renderTexture;
+                camera.Render();
+
+                RenderTexture.active = renderTexture;
+                var texture = new Texture2D(width, height, TextureFormat.RGB24, false);
+                texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                texture.Apply();
+
+                RenderTexture.active = null;
+                renderTexture.Release();
+
+                Debug.Log($"Intelligent screenshot captured: bounds center {targetBounds.center}, size {targetBounds.size}, camera at {cameraPosition}");
+                return texture;
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObj);
+            }
+        }
+
+        /// <summary>
+        /// Вычисляет оптимальную позицию камеры для полного захвата Bounds
+        /// </summary>
+        private static Vector3 CalculateOptimalCameraPosition(Bounds bounds, Camera camera)
+        {
+            var center = bounds.center;
+            var size = bounds.size;
+            var maxSize = Mathf.Max(size.x, size.y, size.z);
+
+            // Вычисляем расстояние камеры на основе FOV и размера объекта
+            var fovInRadians = camera.fieldOfView * Mathf.Deg2Rad;
+            var distance = (maxSize * 1.2f) / (2f * Mathf.Tan(fovInRadians / 2f));
+
+            // Минимальное расстояние для предотвращения слишком близкого расположения
+            distance = Mathf.Max(distance, maxSize * 2f);
+
+            // Размещаем камеру под углом для лучшего обзора (изометрический вид)
+            var offset = new Vector3(1f, 1.5f, 1f).normalized * distance;
+            
+            return center + offset;
         }
     }
 }
