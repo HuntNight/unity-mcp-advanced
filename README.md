@@ -325,18 +325,12 @@ export const myModule = {
 
 MIT License - смотрите [LICENSE](LICENSE) файл для деталей.
 
-## 🙏 Благодарности
-
-- **Model Context Protocol** - за революционную архитектуру AI инструментов
-- **Unity Technologies** - за мощный игровой движок
-- **Anthropic Claude** - за потрясающие AI возможности  
-- **Cursor Editor** - за лучшую AI IDE
 
 ## 📞 Поддержка
 
 - 🐛 **Баги**: [GitHub Issues](https://github.com/HuntNight/unity-mcp-advanced/issues)
 - 💡 **Идеи**: [GitHub Discussions](https://github.com/HuntNight/unity-mcp-advanced/discussions)  
-- 📧 **Email**: nikita@kolobov.dev
+- 📧 **Email**: nik.kolobov@vk.com
 
 ---
 
