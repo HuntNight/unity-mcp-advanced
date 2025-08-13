@@ -4,23 +4,19 @@
 
 ## Инструменты
 
-### `unity_execute` - C# Code Executor
-Выполнение C# кода в Unity Editor с поддержкой классов, функций и полного Unity API.
+### `unity_execute` — C# Code Executor (инструкции + функции, без классов)
+Выполнение C# кода в Unity Editor в надёжном режиме: последовательность инструкций и объявления функций разрешены. Классы/namespace запрещены. Объявленные функции автоматически помечаются как `static`, чтобы их можно было вызывать из основного статического контекста выполнения.
 
 **✅ Поддерживается:**
-- Простые классы с методами и конструкторами
-- Локальные функции (автоматически становятся static)
+- Инструкции C# на верхнем уровне, `using`-директивы
 - Полный Unity API (GameObject, Transform, Material, Rigidbody, Shader, etc.)
-- LINQ операции (Where, Select, GroupBy, Sum, Average, etc.)
-- Циклы, коллекции (List, Array, Dictionary)
-- Using statements, многострочный код
-- Математические вычисления (Mathf, Vector3, Quaternion)
+- LINQ, циклы, коллекции, математика (Math/Mathf, Vector*, Quaternion)
 
-**❌ Не поддерживается:**
-- Интерфейсы, абстрактные классы, наследование
-- Внешние библиотеки (JSON.NET, System.IO)
-- Атрибуты [Serializable], [System.Flags]
-- Сложная инициализация массивов в классах
+**❌ Запрещается:**
+- class/interface/struct/enum
+- namespace
+
+При нарушении правил выполнение не начнётся — вернётся понятная ошибка.
 
 ### `unity_screenshot` - Game View Screenshot
 Скриншот текущего состояния Game View.
@@ -74,7 +70,7 @@ var cube = builder.CreateCube(Vector3.zero, Color.red);
 return $"Создан: {cube.name}";
 ```
 
-### Локальные функции
+### Функции (топ-уровневые и локальные)
 ```csharp
 GameObject CreatePhysicsCube(Vector3 pos, float mass)
 {

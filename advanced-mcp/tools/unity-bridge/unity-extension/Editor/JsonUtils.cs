@@ -35,8 +35,36 @@ namespace UnityBridge
         private static string ArrayToJson(System.Collections.IEnumerable list) =>
             "[" + string.Join(",", list.Cast<object>().Select(ToJson)) + "]";
 
-        private static string Escape(string str) =>
-            str.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+        private static string Escape(string str)
+        {
+            if (string.IsNullOrEmpty(str)) return "";
+            var sb = new System.Text.StringBuilder(str.Length + 16);
+            foreach (var ch in str)
+            {
+                switch (ch)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    default:
+                        if (ch < 0x20)
+                        {
+                            sb.Append("\\u");
+                            sb.Append(((int)ch).ToString("x4"));
+                        }
+                        else
+                        {
+                            sb.Append(ch);
+                        }
+                        break;
+                }
+            }
+            return sb.ToString();
+        }
             
         public static string Unescape(string str) =>
             str.Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\\"", "\"").Replace("\\\\", "\\");

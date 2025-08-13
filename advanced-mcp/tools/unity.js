@@ -15,102 +15,98 @@ const UNITY_BASE_URL = 'http://localhost:7777';
  * Конвертер Unity messages в MCP формат
  */
 function convertToMCPResponse(unityResponse) {
+  const normalize = (resp) => {
+    let data = resp;
+    // Если пришла строка — пробуем распарсить JSON
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { /* ignore */ }
+    }
+    // Если верхний уровень — массив сообщений
+    if (Array.isArray(data)) {
+      return { messages: data };
+    }
+    // Если messages — строка с JSON
+    if (data && typeof data.messages === 'string') {
+      try {
+        const parsed = JSON.parse(data.messages);
+        if (Array.isArray(parsed)) data.messages = parsed;
+      } catch { /* ignore */ }
+    }
+    // Если messages — объект-словарь, превращаем в массив
+    if (data && data.messages && !Array.isArray(data.messages) && typeof data.messages === 'object') {
+      data.messages = Object.values(data.messages);
+    }
+    return data;
+  };
+
+  const unityData = normalize(unityResponse);
+
   // Новая Unity архитектура возвращает { messages: [...] }
-  if (unityResponse.messages && Array.isArray(unityResponse.messages)) {
+  if (unityData && Array.isArray(unityData.messages)) {
     const content = [];
-    
-    for (const msg of unityResponse.messages) {
-      if (msg.type === 'text') {
-        content.push({
-          type: 'text',
-          text: msg.content
-        });
-      } else if (msg.type === 'image') {
-        // Добавляем описание изображения если есть
+    for (const msg of unityData.messages) {
+      if (msg && msg.type === 'text') {
+        content.push({ type: 'text', text: String(msg.content ?? '') });
+      } else if (msg && msg.type === 'image') {
         if (msg.text) {
-          content.push({
-            type: 'text', 
-            text: msg.text
-              });
-            }
-        // Затем само изображение
-        content.push({
-          type: 'image',
-          data: msg.content,
-          mimeType: 'image/png'
-        });
+          content.push({ type: 'text', text: String(msg.text) });
+        }
+        content.push({ type: 'image', data: String(msg.content ?? ''), mimeType: 'image/png' });
       }
     }
-    
-    return { content };
+    if (content.length > 0) return { content };
   }
-  
+
   // Fallback для старого формата Unity API
-  return convertLegacyResponse(unityResponse);
-    }
+  return convertLegacyResponse(unityData ?? unityResponse);
+}
 
 /**
  * Fallback для старого формата Unity (временно)
  */
 function convertLegacyResponse(unityData) {
   const content = [];
-        
+
   // Основное сообщение
-  if (unityData.message) {
-    content.push({
-      type: 'text',
-      text: unityData.message
-    });
+  if (unityData && unityData.message) {
+    content.push({ type: 'text', text: String(unityData.message) });
   }
-  
+
   // Данные результата
-  if (unityData.data && unityData.data !== unityData.message) {
-    content.push({
-      type: 'text', 
-      text: unityData.data
-    });
+  if (unityData && unityData.data && unityData.data !== unityData.message) {
+    content.push({ type: 'text', text: typeof unityData.data === 'string' ? unityData.data : JSON.stringify(unityData.data) });
   }
-  
+
   // Изображение для скриншотов
-  if (unityData.image) {
-    content.push({
-      type: 'text',
-      text: 'Unity Screenshot'
-    });
-    content.push({
-      type: 'image',
-      data: unityData.image,
-      mimeType: 'image/png'
-    });
+  if (unityData && unityData.image) {
+    content.push({ type: 'text', text: 'Unity Screenshot' });
+    content.push({ type: 'image', data: String(unityData.image), mimeType: 'image/png' });
   }
-  
+
   // Ошибки Unity
-  if (unityData.errors && unityData.errors.length > 0) {
+  if (unityData && unityData.errors && unityData.errors.length > 0) {
     const errorText = unityData.errors.map(err => {
       if (typeof err === 'object') {
         const level = err.Level || err.level || 'Info';
         const message = err.Message || err.message || 'Unknown error';
         return `${level}: ${message}`;
       }
-      return err.toString();
+      return err?.toString?.() ?? String(err);
     }).join('\n');
-    
-    content.push({
-      type: 'text',
-      text: `Unity Logs:\n${errorText}`
-    });
+    content.push({ type: 'text', text: `Unity Logs:\n${errorText}` });
   }
-  
-  // Если нет контента, добавляем статус
+
+  // Если нет контента — показываем сырой ответ, чтобы не терять данные
   if (content.length === 0) {
-    content.push({
-      type: 'text',
-      text: `Unity Status: ${unityData.status || 'Unknown'}`
-    });
+    try {
+      content.push({ type: 'text', text: `Raw Unity response: ${JSON.stringify(unityData)}` });
+    } catch {
+      content.push({ type: 'text', text: `Raw Unity response (non-serializable)` });
+    }
   }
-  
+
   return { content };
-  }
+}
   
 /**
  * Универсальный обработчик Unity запросов
@@ -161,6 +157,24 @@ const unityTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        width: {
+          type: 'number',
+          minimum: 256,
+          maximum: 4096,
+          description: 'Ширина скриншота'
+        },
+        height: {
+          type: 'number',
+          minimum: 256,
+          maximum: 4096,
+          description: 'Высота скриншота'
+        },
+        view_type: {
+          type: 'string',
+          enum: ['game', 'scene'],
+          default: 'game',
+          description: 'Источник: game или scene'
+        },
         systemScreenshot: {
           type: 'boolean',
           default: false,
@@ -170,7 +184,11 @@ const unityTools = [
       required: []
     },
     handler: async (params) => {
-      return await handleUnityRequest('/api/screenshot');
+      const requestBody = {};
+      if (typeof params?.width === 'number') requestBody.width = params.width;
+      if (typeof params?.height === 'number') requestBody.height = params.height;
+      if (typeof params?.view_type === 'string') requestBody.view_type = params.view_type;
+      return await handleUnityRequest('/api/screenshot', requestBody);
     }
   },
   
@@ -238,26 +256,41 @@ const unityTools = [
 
   {
     name: "scene_hierarchy",
-    description: 'Unity сцена: анализ объектов и иерархии',
+    description: 'Unity сцена: просмотр иерархии с ограничением глубины и лимитом. Без детального режима. Всегда нечувствительно к регистру, неактивные объекты включены и помечаются. Можно стартовать с path (root по умолчанию). Поддерживает auto-path: exact | glob | regex (определяется автоматически по строке). Возвращает: имя, id, список компонент. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response).',
     inputSchema: {
       type: 'object',
       properties: {
-        detailed: {
-          type: 'boolean',
-          default: false,
-          description: 'Детальный режим: false - только имена и структура, true - + позиция, компоненты, свойства'
+        name_glob: { type: 'string', description: 'Glob фильтр по имени' },
+        name_regex: { type: 'string', description: 'Regex (C#/.NET) фильтр по имени' },
+        tag_glob: { type: 'string', description: 'Glob фильтр по тегу' },
+        path: { type: 'string', description: 'Путь через "/" (например: "World/City/Quarter/Car"). Auto-path: exact (строка без спецсимволов), glob (если есть * ? [..]), regex (если есть ^ $ ( ) | { } \\). Все матчи — нечувствительны к регистру' },
+        max_results: {
+          type: 'number',
+          default: 0,
+          description: 'Максимум результатов (0 = без лимита)'
         },
-        systemScreenshot: {
+        max_depth: {
+          type: 'number',
+          default: -1,
+          description: 'Максимальная глубина обхода (−1 = без лимита)'
+        },
+        allow_large_response: {
           type: 'boolean',
           default: false,
-          description: '🖥️ Включить скриншот рабочего стола. ИСПОЛЬЗОВАТЬ ТОЛЬКО ПРИ СТРОГОЙ НЕОБХОДИМОСТИ УВИДЕТЬ ЭКРАН ПОЛЬЗОВАТЕЛЯ И НЕ ИСПОЛЬЗОВАТЬ ПРОСТО ТАК!'
+          description: 'Снять ограничение 5000 символов (опасно для LLM)'
         }
       },
       required: []
     },
     handler: async (params) => {
       const requestBody = {
-        detailed: params.detailed || false
+        name_glob: params.name_glob,
+        name_regex: params.name_regex,
+        tag_glob: params.tag_glob,
+        path: params.path,
+        max_results: typeof params.max_results === 'number' ? params.max_results : undefined,
+        max_depth: typeof params.max_depth === 'number' ? params.max_depth : undefined,
+        allow_large_response: !!params.allow_large_response
       };
       
       return await handleUnityRequest('/api/scene_hierarchy', requestBody, 15000);
@@ -266,13 +299,23 @@ const unityTools = [
 
   {
     name: "execute",
-    description: 'Unity C# Code Executor - выполнение C# кода в Unity Editor.\n\n✅ ПОДДЕРЖИВАЕТСЯ:\n• Простые классы с методами и конструкторами\n• Локальные функции (автоматически static)\n• Полный Unity API (GameObject, Transform, Material, Rigidbody, etc.)\n• LINQ операции (Where, Select, GroupBy, Sum, etc.)\n• Циклы, коллекции, математические вычисления\n• Using statements, многострочный код\n\n❌ НЕ ПОДДЕРЖИВАЕТСЯ:\n• Интерфейсы, абстрактные классы, наследование\n• Внешние библиотеки (JSON.NET, System.IO)\n• Атрибуты [Serializable], [System.Flags]\n• Сложная инициализация массивов в классах\n\n🎯 ПРИМЕРЫ:\n• Создание объектов: GameObject.CreatePrimitive(PrimitiveType.Cube)\n• Классы: public class Builder { public GameObject Create() {...} }\n• Функции: GameObject CreateCube(Vector3 pos) {...}\n• LINQ: objects.Where(o => o.name.Contains("Test")).ToList()',
+    description: 'Unity C# Code Executor — режим: инструкции + функции (без классов).\n\n✅ ПОДДЕРЖИВАЕТСЯ:\n• Последовательность инструкций C# и топ-уровневые функции (локальные и обычные) — функции автоматически делаются static\n• Полный Unity API (GameObject, Transform, Material, Rigidbody, etc.)\n• LINQ, циклы, коллекции, математические выражения\n• Using-директивы (на верхнем уровне)\n\n❌ ЗАПРЕЩЕНО:\n• Любые объявления class/interface/struct/enum\n• namespace\n\n💡 ПРИМЕР:\nGameObject CreateCube(Vector3 p) { var go = GameObject.CreatePrimitive(PrimitiveType.Cube); go.transform.position = p; return go; }\nvar a = CreateCube(new Vector3(0,1,0));\nreturn a.name;\n',
     inputSchema: {
       type: 'object',
       properties: {
         code: {
           type: 'string',
           description: 'C# код для выполнения в Unity Editor'
+        },
+        safe_mode: {
+          type: 'boolean',
+          default: true,
+          description: 'Безопасный режим: базовая проверка кода на опасные операции'
+        },
+        validate_only: {
+          type: 'boolean',
+          default: false,
+          description: 'Только скомпилировать, не выполнять'
         },
         systemScreenshot: {
           type: 'boolean',
@@ -284,10 +327,54 @@ const unityTools = [
     },
     handler: async (params) => {
         const requestBody = {
-        code: params.code
+        code: params.code,
+        safe_mode: params.safe_mode !== false,
+        validate_only: !!params.validate_only
       };
       
       return await handleUnityRequest('/api/execute', requestBody, 30000);
+    }
+  }
+  ,
+  {
+    name: "scene_grep",
+    description: 'Unity сцена: WHERE + SELECT DSL (всегда нечувствительно к регистру).\n\nWHERE-DSL: and/or/not, скобки (), сравнения (==,!=,>,>=,<,<=), строки: contains, startswith, endswith, matches (regex), hasComp(Type). Пути: name, id, path, active, tag, layer, GameObject.*, Transform.*, Camera.*, Light.*, Rigidbody.*, а также <Component>.<property> и индексация массивов: materials[0].name.\n\nSELECT-DSL: список полей или алиасов: ["GameObject.name", "Transform.position", "pos = Transform.position", "materials[0].name"].\n\nВажно: для префиксного поиска используйте name_glob="Prefix*". Вызов startswith(GameObject.name, "Prefix") будет автоматически превращён в name_glob и исключён из WHERE для эффективности.\n\nФормат вывода для каждого совпадения: "• <полный путь к объекту> - id:<InstanceId>", затем выбранные поля. Неактивные объекты помечаются в заголовке. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response). Поддерживает name_glob/tag_glob/path/max_depth/max_results. Параметра path_mode нет: auto-path (exact|glob|regex) определяется автоматически по строке path.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name_glob: { type: 'string', description: 'Glob фильтр по имени' },
+        name_regex: { type: 'string', description: 'Regex (C#/.NET) фильтр по имени' },
+        tag_glob: { type: 'string', description: 'Glob фильтр по тегу' },
+        where: { type: 'string', description: 'WHERE-DSL: and/or/not, скобки, сравнения (==,!=,>,>=,<,<=), contains/startswith/endswith/matches, hasComp(Type). Пути: name,id,path,active,tag,layer, GameObject.*, Transform.*, <Component>.<property>' },
+        select: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Какие поля выбрать у совпавших объектов. Примеры: ["GameObject.name","path","Transform.position","Light.intensity","pos = Transform.position","materials[0].name"]'
+        },
+        max_results: { type: 'number', default: 100, description: 'Максимум результатов' },
+        path: { type: 'string', description: 'Ограничение поддерева (root по умолчанию). Путь через "/". Auto-path: exact (строка без спецсимволов), glob (если есть * ? [..]), regex (если есть ^ $ ( ) | { } \\). Все матчи — нечувствительны к регистру' },
+        max_depth: { type: 'number', default: -1, description: 'Макс. глубина (−1 = без лимита)' },
+        allow_large_response: {
+          type: 'boolean',
+          default: false,
+          description: 'Снять ограничение 5000 символов (опасно для LLM)'
+        }
+      },
+      required: []
+    },
+    handler: async (params) => {
+      const requestBody = {
+        name_glob: params.name_glob,
+        name_regex: params.name_regex,
+        tag_glob: params.tag_glob,
+        where: typeof params.where === 'string' ? params.where : undefined,
+        select: Array.isArray(params.select) ? params.select : undefined,
+        max_results: typeof params.max_results === 'number' ? params.max_results : 100,
+        allow_large_response: !!params.allow_large_response,
+        path: params.path,
+        max_depth: typeof params.max_depth === 'number' ? params.max_depth : undefined
+      };
+      return await handleUnityRequest('/api/scene_grep', requestBody, 20000);
     }
   }
 ];

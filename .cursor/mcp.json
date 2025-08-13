@@ -8,6 +8,10 @@
       "env": {
         "NODE_ENV": "production"
       }
+    },
+    "filesystem": {
+    "command": "npx",
+     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/nikitakolobov/Hunter/Unity3dProjects/TemplateCursor"]
     }
   }
 }

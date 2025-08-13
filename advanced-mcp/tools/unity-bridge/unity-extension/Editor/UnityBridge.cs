@@ -92,7 +92,8 @@ namespace UnityBridge
                 var result = RouteRequest(request);
                 
                 // Построение ответа
-                return ResponseBuilder.BuildResponse(result);
+                var allowLarge = request.GetValue("allow_large_response", false);
+                return ResponseBuilder.BuildResponse(result, allowLarge);
             }
             catch (Exception ex)
             {
@@ -116,7 +117,13 @@ namespace UnityBridge
                     return ExecuteOnMainThread(() => UnityOperations.ExecuteCode(request));
                     
                 case "/api/scene_hierarchy":
-                    return ExecuteOnMainThread(() => UnityOperations.GetSceneHierarchy(request));
+                    return ExecuteOnMainThread(() => UnityOperations.GetSceneHierarchySimple(request));
+                
+                case "/api/scene_radius":
+                    return ExecuteOnMainThread(() => UnityOperations.GetObjectsInRadius(request));
+                
+                case "/api/scene_grep":
+                    return ExecuteOnMainThread(() => UnityOperations.SceneGrep(request));
                     
                 default:
                     return OperationResult.Fail($"Unknown endpoint: {request.Endpoint}");
