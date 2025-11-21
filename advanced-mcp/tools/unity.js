@@ -107,7 +107,7 @@ function convertLegacyResponse(unityData) {
 
   return { content };
 }
-  
+
 /**
  * Универсальный обработчик Unity запросов
  */
@@ -115,23 +115,23 @@ async function handleUnityRequest(endpoint, data = {}, timeout = 10000) {
   try {
     // 🚀 Убеждаемся что данные корректно сериализуются в UTF-8
     const jsonData = JSON.stringify(data);
-    
+
     const response = await axios.post(`${UNITY_BASE_URL}${endpoint}`, jsonData, {
       timeout,
       responseType: 'json',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Accept': 'application/json; charset=utf-8'
       }
     });
-    
+
     return convertToMCPResponse(response.data);
   } catch (error) {
     const errorContent = [{
       type: 'text',
       text: `Unity Connection Error: ${error.message}\n\nПроверьте:\n• Unity запущен\n• Unity Bridge Window открыт\n• HTTP сервер работает на порту 7777`
     }];
-    
+
     // Добавляем детали ошибки если есть
     if (error.response?.data) {
       try {
@@ -144,9 +144,9 @@ async function handleUnityRequest(endpoint, data = {}, timeout = 10000) {
         });
       }
     }
-    
+
     return { content: errorContent };
-        }
+  }
 }
 
 // Unity инструменты
@@ -191,9 +191,9 @@ const unityTools = [
       return await handleUnityRequest('/api/screenshot', requestBody);
     }
   },
-  
+
   {
-    name: "camera_screenshot", 
+    name: "camera_screenshot",
     description: 'Unity скриншот с произвольной позиции камеры',
     inputSchema: {
       type: 'object',
@@ -206,7 +206,7 @@ const unityTools = [
           description: 'Позиция камеры [x, y, z]'
         },
         target: {
-          type: 'array', 
+          type: 'array',
           items: { type: 'number' },
           minItems: 3,
           maxItems: 3,
@@ -249,7 +249,7 @@ const unityTools = [
         width: params.width || 1920,
         height: params.height || 1080
       };
-      
+
       return await handleUnityRequest('/api/camera_screenshot', requestBody, 20000);
     }
   },
@@ -278,6 +278,11 @@ const unityTools = [
           type: 'boolean',
           default: false,
           description: 'Снять ограничение 5000 символов (опасно для LLM)'
+        },
+        summary: {
+          type: 'boolean',
+          default: false,
+          description: 'Вернуть только статистику (scanned/matched/emitted) без списка объектов'
         }
       },
       required: []
@@ -290,16 +295,17 @@ const unityTools = [
         path: params.path,
         max_results: typeof params.max_results === 'number' ? params.max_results : undefined,
         max_depth: typeof params.max_depth === 'number' ? params.max_depth : undefined,
-        allow_large_response: !!params.allow_large_response
+        allow_large_response: !!params.allow_large_response,
+        summary: !!params.summary
       };
-      
+
       return await handleUnityRequest('/api/scene_hierarchy', requestBody, 15000);
     }
   },
 
   {
     name: "execute",
-    description: 'Unity C# Code Executor — режим: инструкции + функции (без классов).\n\n✅ ПОДДЕРЖИВАЕТСЯ:\n• Последовательность инструкций C# и топ-уровневые функции (локальные и обычные) — функции автоматически делаются static\n• Полный Unity API (GameObject, Transform, Material, Rigidbody, etc.)\n• LINQ, циклы, коллекции, математические выражения\n• Using-директивы (на верхнем уровне)\n\n❌ ЗАПРЕЩЕНО:\n• Любые объявления class/interface/struct/enum\n• namespace\n\n💡 ПРИМЕР:\nGameObject CreateCube(Vector3 p) { var go = GameObject.CreatePrimitive(PrimitiveType.Cube); go.transform.position = p; return go; }\nvar a = CreateCube(new Vector3(0,1,0));\nreturn a.name;\n',
+    description: 'Unity C# Code Executor — инструкции + функции (без классов).\n\n✅ Поддерживается: локальные функции (C# 7+), новые скрипты, using, LINQ, циклы, Unity API\n❌ Запрещено: class/interface/struct/enum/namespace\n💡 Пример кода:\nGameObject CreateHouse(Vector3 p) {\n  Material CreateMat(Color c) { return new Material(Shader.Find("Standard")) { color = c }; }\n  var h = new GameObject("House");\n  // ...\n  return h;\n}\nreturn $"Created: {CreateHouse(Vector3.zero).name}";',
     inputSchema: {
       type: 'object',
       properties: {
@@ -317,6 +323,11 @@ const unityTools = [
           default: false,
           description: 'Только скомпилировать, не выполнять'
         },
+        allow_large_response: {
+          type: 'boolean',
+          default: false,
+          description: 'Снять ограничение 5000 символов (опасно для LLM)'
+        },
         systemScreenshot: {
           type: 'boolean',
           default: false,
@@ -326,12 +337,13 @@ const unityTools = [
       required: ['code']
     },
     handler: async (params) => {
-        const requestBody = {
+      const requestBody = {
         code: params.code,
         safe_mode: params.safe_mode !== false,
-        validate_only: !!params.validate_only
+        validate_only: !!params.validate_only,
+        allow_large_response: !!params.allow_large_response
       };
-      
+
       return await handleUnityRequest('/api/execute', requestBody, 30000);
     }
   }
@@ -376,6 +388,52 @@ const unityTools = [
       };
       return await handleUnityRequest('/api/scene_grep', requestBody, 20000);
     }
+  },
+
+  {
+    name: "play_mode",
+    description: 'Управление режимом Play Mode в Unity Editor.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: {
+          type: 'boolean',
+          description: 'true = включить Play Mode, false = остановить'
+        }
+      },
+      required: ['enabled']
+    },
+    handler: async (params) => {
+      return await handleUnityRequest('/api/play_mode', { enabled: params.enabled });
+    }
+  },
+
+  {
+    name: "scene_radius",
+    description: 'Поиск объектов в радиусе от точки. Возвращает список коллайдеров, попавших в сферу.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        center: {
+          type: 'array',
+          items: { type: 'number' },
+          minItems: 3,
+          maxItems: 3,
+          description: 'Центр сферы [x, y, z]'
+        },
+        radius: {
+          type: 'number',
+          description: 'Радиус поиска'
+        }
+      },
+      required: ['center', 'radius']
+    },
+    handler: async (params) => {
+      return await handleUnityRequest('/api/scene_radius', {
+        center_position: params.center,
+        radius: params.radius
+      });
+    }
   }
 ];
 
@@ -383,7 +441,7 @@ export const unityModule = {
   name: 'unity',
   description: 'Unity Bridge: прозрачный мост AI ↔ Unity3D. Выполнение любого C# кода, скриншоты, анализ сцены.',
   tools: unityTools,
-  
+
   decorators: {
     disableSystemInfo: true,
     disableDebugLogs: true

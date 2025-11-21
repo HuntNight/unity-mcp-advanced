@@ -97,11 +97,11 @@ throw new Error("❌ Что-то пошло не так");
 ## 🔧 Существующие модули
 
 - **unity.js** - 🎮 Unity Bridge — Полный контроль Unity (5 инструментов)
-  - screenshot — скриншот Unity Editor
-  - camera_screenshot — скриншот с произвольной позиции камеры
-  - scene_hierarchy — просмотр иерархии (имя, id, компоненты). Поддерживает name_glob/name_regex/tag_glob, ограничение по поддереву path с авто-определением типа: exact|glob|regex, max_depth, max_results. Всегда нечувствительно к регистру, неактивные включены и помечаются. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response).
+  - screenshot — скриншот Unity Editor. Параметры: `width`, `height`, `view_type` (game/scene).
+  - camera_screenshot — скриншот с произвольной позиции камеры. Параметры: `position`, `target`, `fov`, `width`, `height`.
+  - scene_hierarchy — просмотр иерархии (имя, id, компоненты). Поддерживает name_glob/name_regex/tag_glob, ограничение по поддереву path с авто-определением типа: exact|glob|regex, max_depth, max_results, summary (true = только статистика). Всегда нечувствительно к регистру, неактивные включены и помечаются. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response).
   - scene_grep — умный WHERE + SELECT DSL для точечного инспектирования сцены. Поддерживает name_glob/name_regex/tag_glob, path (auto-path: exact|glob|regex), max_depth, max_results, where, select, allow_large_response. Всегда нечувствительно к регистру, неактивные включены и помечаются. Ограничение ответа 5000 символов (перекрывается allow_large_response).
-  - execute — универсальное выполнение C# кода
+  - execute — универсальное выполнение C# кода. Поддерживает `ImageConversion` и основные модули Unity.
 - **git.js** - Git операции с автопоиском репозитория (9 инструментов)
 - **filesystem.js** - Умные файловые операции (10 инструментов)
 - **smart-files.js** - 🧠 Умные файловые операции с DRY архитектурой (6 инструментов)

@@ -124,6 +124,9 @@ namespace UnityBridge
                 
                 case "/api/scene_grep":
                     return ExecuteOnMainThread(() => UnityOperations.SceneGrep(request));
+
+                case "/api/play_mode":
+                    return ExecuteOnMainThread(() => UnityOperations.SetPlayMode(request));
                     
                 default:
                     return OperationResult.Fail($"Unknown endpoint: {request.Endpoint}");

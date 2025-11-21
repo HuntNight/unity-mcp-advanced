@@ -73,4 +73,9 @@ namespace UnityBridge
             catch { return defaultValue; }
         }
     }
+    public struct ImagePayload
+    {
+        public readonly string Base64;
+        public ImagePayload(string base64) => Base64 = base64;
+    }
 } 
