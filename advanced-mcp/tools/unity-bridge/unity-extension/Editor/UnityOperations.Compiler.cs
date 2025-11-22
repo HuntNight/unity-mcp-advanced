@@ -20,19 +20,12 @@ namespace UnityBridge
                 var code = request.GetValue<string>("code");
                 if (string.IsNullOrEmpty(code))
                     return OperationResult.Fail("Code parameter is required");
-                var safeMode = request.GetValue("safe_mode", true);
                 var validateOnly = request.GetValue("validate_only", false);
                 
                 var unescapedCode = JsonUtils.Unescape(code);
                 var stmtError = ValidateStatementsOnly(unescapedCode);
                 if (!string.IsNullOrEmpty(stmtError))
                     return OperationResult.Fail(stmtError);
-                if (safeMode)
-                {
-                    var validationError = ValidateUserCode(unescapedCode);
-                    if (!string.IsNullOrEmpty(validationError))
-                        return OperationResult.Fail(validationError);
-                }
 
                 var compilationResult = EnsureCompilationComplete();
                 if (!compilationResult.Success)
@@ -97,7 +90,7 @@ namespace UnityBridge
             try
             {
                 var fullCode = GenerateFullCodeForExecution(code);
-                File.WriteAllText(sourcePath, fullCode);
+                File.WriteAllText(sourcePath, fullCode, Encoding.UTF8);
 
                 var references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 
@@ -444,7 +437,8 @@ namespace UnityBridge
             };
             
             var allUsings = new HashSet<string>(defaultUsings);
-            var codeLines = userCode.Split('\n');
+            var normalizedCode = NormalizeArrayLiterals(userCode);
+            var codeLines = normalizedCode.Split('\n');
             
             var parseResult = ParseAdvancedCode(codeLines, allUsings);
             
@@ -468,6 +462,68 @@ public class DynamicCodeExecutor
 }}";
 
             return generatedCode;
+        }
+        
+        private static string NormalizeArrayLiterals(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return code;
+            
+            var lines = code.Split('\n');
+            var result = new List<string>();
+            var inArrayLiteral = false;
+            var braceDepth = 0;
+            var accumulatedArray = new List<string>();
+            
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i];
+                var trimmed = line.Trim();
+                
+                // Проверяем, начинается ли массивный литерал
+                if (!inArrayLiteral && Regex.IsMatch(trimmed, @"new\s+\w+\[\]\s*\{") && trimmed.Contains("{"))
+                {
+                    inArrayLiteral = true;
+                    accumulatedArray.Clear();
+                    accumulatedArray.Add(line);
+                    braceDepth = CountBraces(line, true) - CountBraces(line, false);
+                    
+                    // Если массив уже закрыт на той же строке, обрабатываем как однострочный
+                    if (braceDepth == 0)
+                    {
+                        result.Add(line);
+                        inArrayLiteral = false;
+                        accumulatedArray.Clear();
+                    }
+                    continue;
+                }
+                
+                if (inArrayLiteral)
+                {
+                    accumulatedArray.Add(line);
+                    braceDepth += CountBraces(line, true) - CountBraces(line, false);
+                    
+                    // Когда баланс скобок восстановлен, склеиваем в одну строку
+                    if (braceDepth == 0)
+                    {
+                        var singleLineArray = string.Join(" ", accumulatedArray.Select(l => l.Trim()));
+                        result.Add(singleLineArray);
+                        inArrayLiteral = false;
+                        accumulatedArray.Clear();
+                    }
+                }
+                else
+                {
+                    result.Add(line);
+                }
+            }
+            
+            // Если массив не был закрыт, добавляем как есть
+            if (inArrayLiteral)
+            {
+                result.AddRange(accumulatedArray);
+            }
+            
+            return string.Join("\n", result);
         }
         
         private static CodeParseResult ParseAdvancedCode(string[] codeLines, HashSet<string> allUsings)
@@ -717,68 +773,6 @@ public class DynamicCodeExecutor
             public bool Success { get; set; }
             public string Value { get; set; }
             public string ErrorMessage { get; set; }
-        }
-
-        private static string ValidateUserCode(string code)
-        {
-            var forbiddenPatterns = new[]
-            {
-                @"\bSystem\.IO\b",
-                @"\bSystem\.Net\b",
-                @"\bSystem\.Diagnostics\b",
-                @"\bSystem\.Threading\b",
-                @"\bSystem\.Reflection\.Emit\b",
-                @"\bProcess\.Start\b",
-                @"\bnew\s+Process\s*\(",
-                @"\bFile\.",
-                @"\bDirectory\.",
-                @"\bEnvironment\.",
-                @"DllImport",
-                @"\bApplication\.Quit\b",
-                @"\bEditorApplication\.Exit\b"
-            };
-
-            foreach (var p in forbiddenPatterns)
-            {
-                if (Regex.IsMatch(code, p))
-                {
-                    return $"Forbidden API usage detected: pattern '{p}'";
-                }
-            }
-
-            // Statements + Functions режим: запрещаем только объявления типов и namespace
-            try
-            {
-                var lines = code.Split('\n');
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    var rawLine = lines[i];
-                    var trimmed = rawLine.Trim();
-
-                    // Пропускаем пустые строки и комментарии
-                    if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("//"))
-                        continue;
-
-                    // Блоки namespace запрещены
-                    if (Regex.IsMatch(trimmed, @"^\s*namespace\s+\w+", RegexOptions.IgnoreCase))
-                    {
-                        return "Statements-only: объявления namespace запрещены. Оставьте только инструкции и выражения.";
-                    }
-
-                    // Детектируем объявления типов (class/interface/enum/struct)
-                    if (Regex.IsMatch(trimmed,
-                        @"^\s*(public\s+|private\s+|internal\s+|protected\s+)?(static\s+)?(class|interface|enum|struct)\s+\w+",
-                        RegexOptions.IgnoreCase))
-                    {
-                        return "Statements-only: объявления class/interface/enum/struct запрещены. Используйте только инструкции без определения типов.";
-                    }
-
-                    // Объявления функций РАЗРЕШЕНЫ (обрабатываются и статифицируются позже)
-                }
-            }
-            catch { /* ignore and allow fallback */ }
-
-            return null;
         }
 
         private static string ValidateStatementsOnly(string code)

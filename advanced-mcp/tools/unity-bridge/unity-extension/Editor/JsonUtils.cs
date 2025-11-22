@@ -66,8 +66,35 @@ namespace UnityBridge
             return sb.ToString();
         }
             
-        public static string Unescape(string str) =>
-            str.Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\\"", "\"").Replace("\\\\", "\\");
+        public static string Unescape(string str)
+        {
+            if (string.IsNullOrEmpty(str)) return str;
+            
+            var sb = new System.Text.StringBuilder(str.Length);
+            for (int i = 0; i < str.Length; i++)
+            {
+                if (str[i] == '\\' && i + 1 < str.Length)
+                {
+                    switch (str[i + 1])
+                    {
+                        case 'n': sb.Append('\n'); i++; break;
+                        case 'r': sb.Append('\r'); i++; break;
+                        case 't': sb.Append('\t'); i++; break;
+                        case 'b': sb.Append('\b'); i++; break;
+                        case 'f': sb.Append('\f'); i++; break;
+                        case '\\': sb.Append('\\'); i++; break;
+                        case '"': sb.Append('"'); i++; break;
+                        case '\'': sb.Append('\''); i++; break;
+                        default: sb.Append(str[i]); break;
+                    }
+                }
+                else
+                {
+                    sb.Append(str[i]);
+                }
+            }
+            return sb.ToString();
+        }
 
         private static Dictionary<string, object> ParseObject(string json)
         {
