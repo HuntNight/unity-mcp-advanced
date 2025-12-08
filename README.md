@@ -87,7 +87,7 @@ npm install
 ```json
 {
   "mcpServers": {
-    "enhanced-mcp": {
+    "unity-mcp": {
       "command": "node",
       "args": [
         "/path/to/your/project/advanced-mcp/index.js"
@@ -241,7 +241,7 @@ Editor/
 ### Автоматические скриншоты
 ```javascript
 // Каждый инструмент может включить системный скриншот
-terminal_echo({ message: "test", systemScreenshot: true })
+terminal_system_info({ systemScreenshot: true })
 ```
 
 ### Unity API покрытие

@@ -8,10 +8,7 @@
 claude-mcp/
 ├── index.js              # Главный файл
 ├── tools/                # Модули MCP инструментов
-│   ├── unity.js          # Unity Bridge инструменты (ПЕРЕПИСАН!)
-│   ├── git.js            # Git операции
-│   ├── filesystem.js     # Файловые операции
-│   ├── smart-files.js    # Умные файловые операции (НОВОЕ!)
+│   ├── unity.js          # Unity Bridge инструменты
 │   └── terminal.js       # Системные инструменты
 └── utils/                # Общие утилиты
     ├── mcpServer.js      # Динамическая загрузка модулей
@@ -29,13 +26,6 @@ export const myTools = [
   {
     name: "tool_name",
     description: "Описание инструмента",
-    inputSchema: {
-      type: "object",
-      properties: {
-        param: { type: "string", description: "Параметр" }
-      },
-      required: ["param"]
-    },
     handler: async (args) => {
       const { param } = args;
       return `Результат: ${param}`;
@@ -96,24 +86,22 @@ throw new Error("❌ Что-то пошло не так");
 
 ## 🔧 Существующие модули
 
-- **unity.js** - 🎮 Unity Bridge — Полный контроль Unity (5 инструментов)
+- **unity.js** - 🎮 Unity Bridge — Полный контроль Unity (7 инструментов)
   - screenshot — скриншот Unity Editor. Параметры: `width`, `height`, `view_type` (game/scene).
   - camera_screenshot — скриншот с произвольной позиции камеры. Параметры: `position`, `target`, `fov`, `width`, `height`.
   - scene_hierarchy — просмотр иерархии (имя, id, компоненты). Поддерживает name_glob/name_regex/tag_glob, ограничение по поддереву path с авто-определением типа: exact|glob|regex, max_depth, max_results, summary (true = только статистика). Всегда нечувствительно к регистру, неактивные включены и помечаются. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response).
   - scene_grep — умный WHERE + SELECT DSL для точечного инспектирования сцены. Поддерживает name_glob/name_regex/tag_glob, path (auto-path: exact|glob|regex), max_depth, max_results, where, select, allow_large_response. Всегда нечувствительно к регистру, неактивные включены и помечаются. Ограничение ответа 5000 символов (перекрывается allow_large_response).
   - execute — универсальное выполнение C# кода. Поддерживает `ImageConversion` и основные модули Unity.
-- **git.js** - Git операции с автопоиском репозитория (9 инструментов)
-- **filesystem.js** - Умные файловые операции (10 инструментов)
-- **smart-files.js** - 🧠 Умные файловые операции с DRY архитектурой (6 инструментов)
-  - read_file - чтение с автопоиском и подсказками
-  - edit_file - редактирование с автосозданием папок
-  - delete_file - удаление с подтверждением
-  - list_dir - листинг с подробной статистикой
-  - file_search - поиск файлов с паттернами
-  - grep_search - поиск по содержимому с контекстом
-- **terminal.js** - Системная информация, порты, процессы (6 инструментов)
+  - play_mode — управление режимом Play Mode в Unity Editor
+  - scene_radius — поиск объектов в радиусе от точки
+- **terminal.js** - Системная информация, порты, процессы (5 инструментов)
+  - system_info — мониторинг системы, портов и процессов
+  - check_port — проверка статуса порта
+  - find_process — поиск процессов по имени
+  - safe_curl — HTTP запросы
+  - wait_for_user — интерактивный помощник для вопросов
 
-**Всего: 33 инструмента**
+**Всего: 12 инструментов**
 
 ## 🛠️ Принципы разработки
 

@@ -20,58 +20,7 @@ const execAsync = promisify(exec);
 // 🎨 СИСТЕМА ДЕКОРАТОРОВ - КРАСИВАЯ КОМПОЗИЦИЯ!
 let decorators = [];
 
-/**
- * 🔧 АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ systemScreenshot ПАРАМЕТРА
- */
-export function addSystemScreenshotParameter(toolConfig) {
-  if (!toolConfig.inputSchema || !toolConfig.inputSchema.properties) {
-    return toolConfig;
-  }
 
-  // Если параметр уже есть, не добавляем
-  if (toolConfig.inputSchema.properties.systemScreenshot) {
-    return toolConfig;
-  }
-
-  return {
-    ...toolConfig,
-    inputSchema: {
-      ...toolConfig.inputSchema,
-      properties: {
-        ...toolConfig.inputSchema.properties,
-        systemScreenshot: {
-          type: "boolean",
-          default: false,
-          description: "🖥️ Включить скриншот рабочего стола в ответ. Используй когда телепатия не работает и нужно РЕАЛЬНО увидеть что происходит на экране!"
-        }
-      }
-    }
-  };
-}
-
-/**
- * 📸 СОЗДАНИЕ СКРИНШОТА СИСТЕМЫ
- */
-async function takeSystemScreenshot() {
-  try {
-    // Используем macOS screencapture для создания скриншота
-    const tempFile = `/tmp/screenshot_${Date.now()}.png`;
-    await execAsync(`screencapture -x "${tempFile}"`);
-    
-    // Читаем файл и конвертируем в base64
-    const fs = await import('fs');
-    const imageBuffer = await fs.promises.readFile(tempFile);
-    const base64 = imageBuffer.toString('base64');
-    
-    // Удаляем временный файл
-    await fs.promises.unlink(tempFile);
-    
-    return base64;
-  } catch (error) {
-    logError(`Screenshot failed: ${extractErrorDetails(error)}`);
-    return null;
-  }
-}
 
 /**
  * 🎨 НОВАЯ ГИБКАЯ СИСТЕМА ДЕКОРАТОРОВ С ФУНКЦИЯМИ-ТРИГГЕРАМИ!
@@ -158,26 +107,7 @@ export function getActiveDecorators() {
   return decorators.map(d => d.name || 'anonymous');
 }
 
-/**
- * 🖼️ ДЕКОРАТОР СКРИНШОТОВ (НОВАЯ АРХИТЕКТУРА)
- */
-const screenshotDecorator = async (callOriginalFunc, args) => {
-  // 🚀 Сначала выполняем оригинальную функцию
-  const result = await callOriginalFunc();
 
-  // 📸 Потом добавляем скриншот если нужно
-  if (args?.systemScreenshot) {
-    const screenshot = await takeSystemScreenshot();
-    if (screenshot) {
-      return addContentToResult(result, {
-        type: "image",
-        data: screenshot,
-        mimeType: "image/png"
-      });
-    }
-  }
-  return result;
-};
 
 /**
  * 🔥 КРУТОЙ ДЕКОРАТОР СИСТЕМНОЙ ИНФОРМАЦИИ С ПОРТАМИ И ПРОЦЕССАМИ!
@@ -313,7 +243,7 @@ const debugLogsDecorator = async (callOriginalFunc, args) => {
 export function initializeDefaultDecorators() {
   clearDecorators();
   addDecorator(debugLogsDecorator); // 🔥 DEBUG ЛОГИ ПЕРВЫМИ - чтобы захватить все логи!
-  addDecorator(screenshotDecorator);
+
   //addDecorator(advancedSystemInfoDecorator); // 🔥 КРУТОЙ СИСТЕМНЫЙ ДЕКОРАТОР!
   logSuccess('🎨 Default decorators initialized: debugLogs + screenshot + advancedSystemInfo');
 }

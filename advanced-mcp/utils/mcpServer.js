@@ -26,7 +26,6 @@ import { fileURLToPath } from 'url';
 // 🎨 ИМПОРТЫ НАШИХ МОДУЛЕЙ
 import { logInfo, logError, logSuccess, extractErrorDetails } from './logger.js';
 import {
-  addSystemScreenshotParameter,
   applyDecorators,
   initializeDefaultDecorators,
   addDecorator,
@@ -80,6 +79,13 @@ export function createMcpServer({ name, version, modulesPath = '../tools' }) {
     const files = fs.readdirSync(toolsDir)
       .filter(file => file.endsWith('.js'))
       .filter(file => !file.startsWith('.'));
+
+    // 🔥 SORT MODULES: unity.js FIRST!
+    files.sort((a, b) => {
+      if (a === 'unity.js') return -1;
+      if (b === 'unity.js') return 1;
+      return a.localeCompare(b);
+    });
 
     logInfo(`📁 Найдено ${files.length} JS файлов: ${files.join(', ')}`);
 
@@ -146,10 +152,7 @@ export function createMcpServer({ name, version, modulesPath = '../tools' }) {
 
         const fullToolName = `${moduleName}_${toolName}`;
 
-        // Добавляем systemScreenshot параметр если его нет
-        const enhancedTool = addSystemScreenshotParameter(toolConfig);
-
-        allTools.set(fullToolName, enhancedTool);
+        allTools.set(fullToolName, toolConfig);
         toolsAdded.push(fullToolName);
       }
 

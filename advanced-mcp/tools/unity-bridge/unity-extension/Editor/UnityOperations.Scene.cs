@@ -769,11 +769,12 @@ namespace UnityBridge
                     case Or o: return Evaluate(o.L, obj, path) || Evaluate(o.R, obj, path);
                     case Not n: return !Evaluate(n.X, obj, path);
                     case Cmp c:
-                    {
-                        var lv = ResolveValue(obj, path, c.Left);
-                        var rv = ParseLiteralOrPath(obj, path, c.Right);
-                        return Compare(lv, rv, c.Op);
-                    }
+                        try {
+                            var lv = ResolveValue(obj, path, c.Left);
+                            var rv = ParseLiteralOrPath(obj, path, c.Right);
+                            return Compare(lv, rv, c.Op);
+                        } catch (Exception ex) { throw new Exception($"Evaluate Cmp error: {c.Left} {c.Op} {c.Right} on {obj.name}: {ex}"); }
+
                     case Func f:
                     {
                         var name = f.Name.ToLowerInvariant();
@@ -832,9 +833,11 @@ namespace UnityBridge
                 }
                 else
                 {
-                    var ls = Convert.ToString(left)?.ToLowerInvariant();
-                    var rs = Convert.ToString(right)?.ToLowerInvariant();
-                    cmp = string.Compare(ls, rs, StringComparison.Ordinal);
+                    try {
+                        var ls = Convert.ToString(left)?.ToLowerInvariant();
+                        var rs = Convert.ToString(right)?.ToLowerInvariant();
+                        cmp = string.Compare(ls, rs, StringComparison.Ordinal);
+                    } catch (Exception ex) { UnityEngine.Debug.LogError($"Compare-String error: {ex}"); return false; }
                 }
                 switch (op)
                 {
@@ -844,6 +847,17 @@ namespace UnityBridge
                     case ">=": return cmp >= 0;
                     case "<": return cmp < 0;
                     case "<=": return cmp <= 0;
+                    case "contains": return (Convert.ToString(left)?.ToLowerInvariant() ?? "").Contains(Convert.ToString(right)?.ToLowerInvariant() ?? "");
+                    case "startswith": 
+                        try {
+                             var l = (Convert.ToString(left)?.ToLowerInvariant() ?? "");
+                             var r = (Convert.ToString(right)?.ToLowerInvariant() ?? "");
+                             return l.StartsWith(r);
+                        } catch (Exception ex) { throw new Exception($"StartsWith error: {ex}"); }
+                    case "endswith": return (Convert.ToString(left)?.ToLowerInvariant() ?? "").EndsWith(Convert.ToString(right)?.ToLowerInvariant() ?? "");
+                    case "matches": 
+                        try { return System.Text.RegularExpressions.Regex.IsMatch(Convert.ToString(left) ?? "", Convert.ToString(right) ?? "", System.Text.RegularExpressions.RegexOptions.IgnoreCase); }
+                        catch { return false; }
                 }
                 return false;
             }
@@ -867,6 +881,15 @@ namespace UnityBridge
             {
                 if (string.IsNullOrWhiteSpace(expr)) return null;
                 expr = expr.Trim();
+
+                // Built-in aliases
+                if (string.Equals(expr, "name", StringComparison.OrdinalIgnoreCase)) return obj.name;
+                if (string.Equals(expr, "tag", StringComparison.OrdinalIgnoreCase)) return obj.tag;
+                if (string.Equals(expr, "layer", StringComparison.OrdinalIgnoreCase)) return LayerMask.LayerToName(obj.layer);
+                if (string.Equals(expr, "active", StringComparison.OrdinalIgnoreCase)) return obj.activeInHierarchy;
+                if (string.Equals(expr, "path", StringComparison.OrdinalIgnoreCase)) return path;
+                if (string.Equals(expr, "id", StringComparison.OrdinalIgnoreCase)) return obj.GetInstanceID();
+
                 // New style: ComponentName.member
                 return ResolveComponentExpression(obj, path, expr);
             }
@@ -931,7 +954,7 @@ namespace UnityBridge
                 private string ReadOp()
                 {
                     Skip();
-                    var ops = new[]{"==","!=",">=","<=",">","<"};
+                    var ops = new[]{"==","!=",">=","<=",">","<", "contains", "startswith", "endswith", "matches"};
                     foreach (var op in ops) if (_s.Substring(_i).StartsWith(op)) { _i += op.Length; return op; }
                     // fallback to equality
                     return "==";

@@ -28,10 +28,48 @@
 - `width/height` - разрешение (256-4096px)
 - `fov` - поле зрения (10-179°)
 
+### `unity_scene_grep` - Scene Query DSL
+Умный WHERE + SELECT DSL для точечного инспектирования сцены.
+
+**WHERE-DSL:** `and`/`or`/`not`, скобки `()`, сравнения `== != > >= < <=`, строки: `contains`, `startswith`, `endswith`, `matches` (regex), `hasComp(Type)`. Пути: `name`, `id`, `path`, `active`, `tag`, `layer`, `GameObject.*`, `Transform.*`, `Camera.*`, `Light.*`, `Rigidbody.*`, а также `<Component>.<property>` и индексация массивов: `materials[0].name`.
+
+**SELECT-DSL:** список полей или алиасы: `["GameObject.name", "Transform.position", "pos = Transform.position", "materials[0].name"]`.
+
+**Параметры:**
+- `name_glob`, `name_regex`, `tag_glob` - фильтры по имени и тегу
+- `path` - ограничение поддерева (root по умолчанию). Auto-path: exact|glob|regex
+- `where` - WHERE-DSL выражение
+- `select` - массив полей для выборки
+- `max_results` - максимум результатов (по умолчанию 100)
+- `max_depth` - максимальная глубина (−1 = без лимита)
+- `allow_large_response` - снять ограничение 5000 символов
+
+Всегда нечувствительно к регистру, неактивные объекты включены и помечаются.
+
+### `unity_play_mode` - Play Mode Control
+Управление режимом Play Mode в Unity Editor.
+- `enabled: true` - включить Play Mode
+- `enabled: false` - остановить Play Mode
+
+### `unity_scene_radius` - Radius Search
+Поиск объектов в радиусе от точки. Возвращает список коллайдеров, попавших в сферу.
+- `center` - центр сферы [x, y, z]
+- `radius` - радиус поиска
+
 ### `unity_scene_hierarchy` - Scene Analysis
-Анализ объектов сцены и их иерархии.
-- `detailed: false` - только имена и структура
-- `detailed: true` - + позиции, компоненты, свойства
+Анализ объектов сцены и их иерархии. Возвращает имя, id, список компонент (без детального режима).
+
+**Параметры:**
+- `name_glob` - Glob фильтр по имени
+- `name_regex` - Regex (C#/.NET) фильтр по имени
+- `tag_glob` - Glob фильтр по тегу
+- `path` - Путь через "/" (например: "World/City/Quarter/Car"). Auto-path: exact (строка без спецсимволов), glob (если есть * ? [..]), regex (если есть ^ $ ( ) | { } \). Все матчи — нечувствительны к регистру
+- `max_results` - Максимум результатов (0 = без лимита)
+- `max_depth` - Максимальная глубина обхода (−1 = без лимита)
+- `allow_large_response` - Снять ограничение 5000 символов (опасно для LLM)
+- `summary` - Вернуть только статистику (scanned/matched/emitted) без списка объектов
+
+Всегда нечувствительно к регистру, неактивные объекты включены и помечаются.
 
 ## Примеры использования
 
@@ -41,33 +79,6 @@ var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
 cube.name = "MyCube";
 cube.transform.position = new Vector3(0, 1, 0);
 return "Куб создан!";
-```
-
-### Класс с методами
-```csharp
-public class ObjectBuilder
-{
-    public string Name { get; set; }
-    
-    public ObjectBuilder(string name) { Name = name; }
-    
-    public GameObject CreateCube(Vector3 pos, Color color)
-    {
-        var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        cube.name = Name;
-        cube.transform.position = pos;
-        
-        var material = new Material(Shader.Find("Standard"));
-        material.color = color;
-        cube.GetComponent<MeshRenderer>().material = material;
-        
-        return cube;
-    }
-}
-
-var builder = new ObjectBuilder("TestCube");
-var cube = builder.CreateCube(Vector3.zero, Color.red);
-return $"Создан: {cube.name}";
 ```
 
 ### Функции (топ-уровневые и локальные)
@@ -142,6 +153,9 @@ return "Пирамида из сфер создана!";
 - `/api/screenshot` - Game View скриншот  
 - `/api/camera_screenshot` - кастомный скриншот
 - `/api/scene_hierarchy` - анализ сцены
+- `/api/scene_grep` - WHERE + SELECT DSL запросы к сцене
+- `/api/play_mode` - управление Play Mode
+- `/api/scene_radius` - поиск объектов в радиусе
 
 ## Установка
 
@@ -155,5 +169,5 @@ return "Пирамида из сфер создана!";
 - Работает только в Unity Editor (не в Play Mode)
 - Требует Unity 2020.3+ с URP
 - Создание материалов в Edit Mode может вызывать предупреждения
-- Сложные ООП паттерны не поддерживаются
+- **Классы, namespace, struct, enum ЗАПРЕЩЕНЫ** в `unity_execute` - разрешены только инструкции и функции
 - Внешние библиотеки недоступны 

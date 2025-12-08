@@ -1,10 +1,10 @@
 /**
- * Unity Bridge MCP Module - Прозрачный мост
+ * Unity Bridge MCP Module - Transparent Bridge
  * 
- * Новая упрощенная архитектура:
- * • Unity возвращает готовый массив messages
- * • JS просто передает данные без обработки
- * • Максимальная прозрачность связи
+ * Simplified architecture:
+ * • Unity returns a ready-to-use array of messages
+ * • JS simply forwards data without processing
+ * • Maximum transparency
  */
 
 import axios from 'axios';
@@ -153,7 +153,7 @@ async function handleUnityRequest(endpoint, data = {}, timeout = 10000) {
 const unityTools = [
   {
     name: "screenshot",
-    description: 'Unity Game View скриншот',
+    description: 'Captures a high-resolution screenshot from the Unity Editor\'s Game View or Scene View. The image is returned as base64 encoded data. This tool is useful for verifying visual changes, UI layouts, or rendering artifacts.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -161,28 +161,23 @@ const unityTools = [
           type: 'number',
           minimum: 256,
           maximum: 4096,
-          description: 'Ширина скриншота'
+          description: 'The width of the screenshot in pixels. Range: 256-4096.'
         },
         height: {
           type: 'number',
           minimum: 256,
           maximum: 4096,
-          description: 'Высота скриншота'
+          description: 'The height of the screenshot in pixels. Range: 256-4096.'
         },
         view_type: {
           type: 'string',
           enum: ['game', 'scene'],
           default: 'game',
-          description: 'Источник: game или scene'
+          description: 'Specifies the source view for the screenshot: \'game\' for the Game View (default) or \'scene\' for the Scene View.'
         },
-        systemScreenshot: {
-          type: 'boolean',
-          default: false,
-          description: '🖥️ Включить скриншот рабочего стола. ИСПОЛЬЗОВАТЬ ТОЛЬКО ПРИ СТРОГОЙ НЕОБХОДИМОСТИ УВИДЕТЬ ЭКРАН ПОЛЬЗОВАТЕЛЯ И НЕ ИСПОЛЬЗОВАТЬ ПРОСТО ТАК!'
-        }
       },
-      required: []
     },
+    required: [],
     handler: async (params) => {
       const requestBody = {};
       if (typeof params?.width === 'number') requestBody.width = params.width;
@@ -194,7 +189,7 @@ const unityTools = [
 
   {
     name: "camera_screenshot",
-    description: 'Unity скриншот с произвольной позиции камеры',
+    description: 'Renders a screenshot from a specific virtual camera position in the scene, defined by world coordinates and a target focus point. Allows for validating scene composition from exact angles without moving the main scene camera.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -203,44 +198,39 @@ const unityTools = [
           items: { type: 'number' },
           minItems: 3,
           maxItems: 3,
-          description: 'Позиция камеры [x, y, z]'
+          description: 'The world space coordinates [x, y, z] of the camera.'
         },
         target: {
           type: 'array',
           items: { type: 'number' },
           minItems: 3,
           maxItems: 3,
-          description: 'Точка направления камеры [x, y, z]'
+          description: 'The world space coordinates [x, y, z] the camera should face.'
         },
         width: {
           type: 'number',
           default: 1920,
           minimum: 256,
           maximum: 4096,
-          description: 'Ширина скриншота в пикселях'
+          description: 'The pixel width of the generated screenshot.'
         },
         height: {
           type: 'number',
           default: 1080,
           minimum: 256,
           maximum: 4096,
-          description: 'Высота скриншота в пикселях'
+          description: 'The pixel height of the generated screenshot.'
         },
         fov: {
           type: 'number',
           default: 60,
           minimum: 10,
           maximum: 179,
-          description: 'Поле зрения камеры в градусах'
+          description: 'The field of view in degrees.'
         },
-        systemScreenshot: {
-          type: 'boolean',
-          default: false,
-          description: '🖥️ Включить скриншот рабочего стола. ИСПОЛЬЗОВАТЬ ТОЛЬКО ПРИ СТРОГОЙ НЕОБХОДИМОСТИ УВИДЕТЬ ЭКРАН ПОЛЬЗОВАТЕЛЯ И НЕ ИСПОЛЬЗОВАТЬ ПРОСТО ТАК!'
-        }
       },
-      required: ['position', 'target']
     },
+    required: ['position', 'target'],
     handler: async (params) => {
       const requestBody = {
         position: params.position,
@@ -256,37 +246,37 @@ const unityTools = [
 
   {
     name: "scene_hierarchy",
-    description: 'Unity сцена: просмотр иерархии с ограничением глубины и лимитом. Без детального режима. Всегда нечувствительно к регистру, неактивные объекты включены и помечаются. Можно стартовать с path (root по умолчанию). Поддерживает auto-path: exact | glob | regex (определяется автоматически по строке). Возвращает: имя, id, список компонент. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response).',
+    description: 'Retrieves the hierarchy of GameObjects in the active Unity scene. Supports filtering by name (Exact, Glob, Regex), tag, and hierarchy depth. Returns a structured list of objects including names, InstanceIDs, and attached components. Useful for mapping the scene structure or locating specific objects.',
     inputSchema: {
       type: 'object',
       properties: {
-        name_glob: { type: 'string', description: 'Glob фильтр по имени' },
-        name_regex: { type: 'string', description: 'Regex (C#/.NET) фильтр по имени' },
-        tag_glob: { type: 'string', description: 'Glob фильтр по тегу' },
-        path: { type: 'string', description: 'Путь через "/" (например: "World/City/Quarter/Car"). Auto-path: exact (строка без спецсимволов), glob (если есть * ? [..]), regex (если есть ^ $ ( ) | { } \\). Все матчи — нечувствительны к регистру' },
+        name_glob: { type: 'string', description: 'Filter objects by name using glob patterns (e.g., \'Player*\').' },
+        name_regex: { type: 'string', description: 'Filter objects by name using C# regular expressions.' },
+        tag_glob: { type: 'string', description: 'Filter objects by tag using glob patterns.' },
+        path: { type: 'string', description: 'Limits the search to a specific subtree path (e.g., \'World/Level1\').' },
         max_results: {
           type: 'number',
           default: 0,
-          description: 'Максимум результатов (0 = без лимита)'
+          description: 'Maximum number of results to return (0 for unlimited).'
         },
         max_depth: {
           type: 'number',
           default: -1,
-          description: 'Максимальная глубина обхода (−1 = без лимита)'
+          description: 'Maximum traversal depth in the hierarchy (-1 for unlimited).'
         },
         allow_large_response: {
           type: 'boolean',
           default: false,
-          description: 'Снять ограничение 5000 символов (опасно для LLM)'
+          description: 'If true, bypasses the standard response size limit (use with caution needed for large hierarchies).'
         },
         summary: {
           type: 'boolean',
           default: false,
-          description: 'Вернуть только статистику (scanned/matched/emitted) без списка объектов'
+          description: 'If true, returns only statistical data (count of scanned/matched objects) without the full object list.'
         }
       },
-      required: []
     },
+    required: [],
     handler: async (params) => {
       const requestBody = {
         name_glob: params.name_glob,
@@ -305,37 +295,32 @@ const unityTools = [
 
   {
     name: "execute",
-    description: 'Unity C# Code Executor — инструкции + функции (без классов).\n\n✅ Поддерживается: локальные функции (C# 7+), новые скрипты, using, LINQ, циклы, Unity API\n❌ Запрещено: class/interface/struct/enum/namespace\n💡 Пример кода:\nGameObject CreateHouse(Vector3 p) {\n  Material CreateMat(Color c) { return new Material(Shader.Find("Standard")) { color = c }; }\n  var h = new GameObject("House");\n  // ...\n  return h;\n}\nreturn $"Created: {CreateHouse(Vector3.zero).name}";',
+    description: 'Executes arbitrary C# code within the running Unity Editor environment. Supports local functions, LINQ, and Unity API calls. This tool allows for dynamic scripting, object manipulation, and state verification. Note: Code is wrapped in a method body; class/struct definitions are not supported directly.',
     inputSchema: {
       type: 'object',
       properties: {
         code: {
           type: 'string',
-          description: 'C# код для выполнения в Unity Editor'
+          description: 'The C# code snippet to execute.'
         },
         safe_mode: {
           type: 'boolean',
           default: true,
-          description: 'Безопасный режим: базовая проверка кода на опасные операции'
+          description: 'Enables basic static analysis to prevent obviously destructive operations (default: true).'
         },
         validate_only: {
           type: 'boolean',
           default: false,
-          description: 'Только скомпилировать, не выполнять'
+          description: 'If true, compiles the code to check for syntax errors without executing it.'
         },
         allow_large_response: {
           type: 'boolean',
           default: false,
-          description: 'Снять ограничение 5000 символов (опасно для LLM)'
+          description: 'If true, allows the return of large string payloads exceeding standard limits.'
         },
-        systemScreenshot: {
-          type: 'boolean',
-          default: false,
-          description: '🖥️ Включить скриншот рабочего стола. ИСПОЛЬЗОВАТЬ ТОЛЬКО ПРИ СТРОГОЙ НЕОБХОДИМОСТИ УВИДЕТЬ ЭКРАН ПОЛЬЗОВАТЕЛЯ И НЕ ИСПОЛЬЗОВАТЬ ПРОСТО ТАК!'
-        }
       },
-      required: ['code']
     },
+    required: ['code'],
     handler: async (params) => {
       const requestBody = {
         code: params.code,
@@ -346,34 +331,34 @@ const unityTools = [
 
       return await handleUnityRequest('/api/execute', requestBody, 30000);
     }
-  }
-  ,
+  },
+
   {
     name: "scene_grep",
-    description: 'Unity сцена: WHERE + SELECT DSL (всегда нечувствительно к регистру).\n\nWHERE-DSL: and/or/not, скобки (), сравнения (==,!=,>,>=,<,<=), строки: contains, startswith, endswith, matches (regex), hasComp(Type). Пути: name, id, path, active, tag, layer, GameObject.*, Transform.*, Camera.*, Light.*, Rigidbody.*, а также <Component>.<property> и индексация массивов: materials[0].name.\n\nSELECT-DSL: список полей или алиасов: ["GameObject.name", "Transform.position", "pos = Transform.position", "materials[0].name"].\n\nВажно: для префиксного поиска используйте name_glob="Prefix*". Вызов startswith(GameObject.name, "Prefix") будет автоматически превращён в name_glob и исключён из WHERE для эффективности.\n\nФормат вывода для каждого совпадения: "• <полный путь к объекту> - id:<InstanceId>", затем выбранные поля. Неактивные объекты помечаются в заголовке. Встроенный лимит ответа 5000 символов (перекрывается allow_large_response). Поддерживает name_glob/tag_glob/path/max_depth/max_results. Параметра path_mode нет: auto-path (exact|glob|regex) определяется автоматически по строке path.',
+    description: 'Performs advanced querying of the Unity scene using a SQL-like DSL. Supports filtering objects (WHERE clause) based on properties, components, names, and tags, and selecting specific data fields (SELECT clause). Ideal for complex scene introspection and validation.',
     inputSchema: {
       type: 'object',
       properties: {
-        name_glob: { type: 'string', description: 'Glob фильтр по имени' },
-        name_regex: { type: 'string', description: 'Regex (C#/.NET) фильтр по имени' },
-        tag_glob: { type: 'string', description: 'Glob фильтр по тегу' },
-        where: { type: 'string', description: 'WHERE-DSL: and/or/not, скобки, сравнения (==,!=,>,>=,<,<=), contains/startswith/endswith/matches, hasComp(Type). Пути: name,id,path,active,tag,layer, GameObject.*, Transform.*, <Component>.<property>' },
+        name_glob: { type: 'string', description: 'Filter by object name using glob patterns.' },
+        name_regex: { type: 'string', description: 'Filter by object name using regular expressions.' },
+        tag_glob: { type: 'string', description: 'Filter by object tag.' },
+        where: { type: 'string', description: 'The filtering condition using DSL (e.g., \'active == true and Light.intensity > 0\'). Supports comparison operators, logical operators, and property access.' },
         select: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Какие поля выбрать у совпавших объектов. Примеры: ["GameObject.name","path","Transform.position","Light.intensity","pos = Transform.position","materials[0].name"]'
+          description: 'List of fields or properties to retrieve for matching objects (e.g., [\'GameObject.name\', \'Transform.position\']).'
         },
-        max_results: { type: 'number', default: 100, description: 'Максимум результатов' },
-        path: { type: 'string', description: 'Ограничение поддерева (root по умолчанию). Путь через "/". Auto-path: exact (строка без спецсимволов), glob (если есть * ? [..]), regex (если есть ^ $ ( ) | { } \\). Все матчи — нечувствительны к регистру' },
-        max_depth: { type: 'number', default: -1, description: 'Макс. глубина (−1 = без лимита)' },
+        max_results: { type: 'number', default: 100, description: 'Limit the number of returned matches.' },
+        path: { type: 'string', description: 'Restrict search to a specific hierarchy path.' },
+        max_depth: { type: 'number', default: -1, description: 'Maximum depth for recursive search.' },
         allow_large_response: {
           type: 'boolean',
           default: false,
-          description: 'Снять ограничение 5000 символов (опасно для LLM)'
+          description: 'Permit large response payloads.'
         }
       },
-      required: []
     },
+    required: [],
     handler: async (params) => {
       const requestBody = {
         name_glob: params.name_glob,
@@ -392,17 +377,17 @@ const unityTools = [
 
   {
     name: "play_mode",
-    description: 'Управление режимом Play Mode в Unity Editor.',
+    description: 'Controls the Play Mode state of the Unity Editor. Can be used to start or stop the game simulation programmatically.',
     inputSchema: {
       type: 'object',
       properties: {
         enabled: {
           type: 'boolean',
-          description: 'true = включить Play Mode, false = остановить'
+          description: 'Set to true to enter Play Mode, or false to exit Play Mode.'
         }
       },
-      required: ['enabled']
     },
+    required: ['enabled'],
     handler: async (params) => {
       return await handleUnityRequest('/api/play_mode', { enabled: params.enabled });
     }
@@ -410,7 +395,7 @@ const unityTools = [
 
   {
     name: "scene_radius",
-    description: 'Поиск объектов в радиусе от точки. Возвращает список коллайдеров, попавших в сферу.',
+    description: 'Performs a spatial search to find all Colliders within a specified spherical radius from a center point. Returns a list of objects physically present in that volume.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -419,15 +404,15 @@ const unityTools = [
           items: { type: 'number' },
           minItems: 3,
           maxItems: 3,
-          description: 'Центр сферы [x, y, z]'
+          description: 'The center point [x, y, z] of the search sphere.'
         },
         radius: {
           type: 'number',
-          description: 'Радиус поиска'
+          description: 'The radius of the search sphere.'
         }
       },
-      required: ['center', 'radius']
     },
+    required: ['center', 'radius'],
     handler: async (params) => {
       return await handleUnityRequest('/api/scene_radius', {
         center_position: params.center,
@@ -439,7 +424,7 @@ const unityTools = [
 
 export const unityModule = {
   name: 'unity',
-  description: 'Unity Bridge: прозрачный мост AI ↔ Unity3D. Выполнение любого C# кода, скриншоты, анализ сцены.',
+  description: 'Unity Bridge: specific AI ↔ Unity3D interface. Execute C# code, capture screenshots, and analyze scene structure.',
   tools: unityTools,
 
   decorators: {
