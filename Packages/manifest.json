@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "com.unity-bridge": "file:../advanced-mcp/tools/unity-bridge/unity-extension",
+    "com.unity-bridge": "file:../unity-mcp/tools/unity-bridge/unity-extension",
     "com.unity.collab-proxy": "2.8.2",
     "com.unity.feature.development": "1.0.2",
     "com.unity.inputsystem": "1.14.0",

@@ -233,12 +233,12 @@ namespace UnityBridge
                 }
                 if (GUILayout.Button("Reveal index.js in Finder", GUILayout.Height(24)))
                 {
-                    var idx = GetAdvancedMcpIndexPath();
+                    var idx = GetUnityMcpIndexPath();
                     if (File.Exists(idx)) EditorUtility.RevealInFinder(idx);
                 }
                 if (GUILayout.Button("Open README", GUILayout.Height(24)))
                 {
-                    var readme = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "advanced-mcp/README.md");
+                    var readme = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "unity-mcp/README.md");
                     if (File.Exists(readme)) EditorUtility.OpenWithDefaultApp(readme);
                 }
                 EditorGUILayout.EndHorizontal();
@@ -450,11 +450,11 @@ namespace UnityBridge
 
         private string BuildCursorMcpConfigJson()
         {
-            var indexPath = GetAdvancedMcpIndexPath().Replace("\\", "/");
+            var indexPath = GetUnityMcpIndexPath().Replace("\\", "/");
             var json =
                 "{\n" +
                 "  \"mcpServers\": {\n" +
-                "    \"enhanced-mcp\": {\n" +
+                "    \"unity-mcp\": {\n" +
                 "      \"command\": \"node\",\n" +
                 $"      \"args\": [ \"{indexPath}\" ],\n" +
                 "      \"env\": { \"NODE_ENV\": \"production\" }\n" +
@@ -464,10 +464,10 @@ namespace UnityBridge
             return json;
         }
 
-        private string GetAdvancedMcpIndexPath()
+        private string GetUnityMcpIndexPath()
         {
             var projectRoot = Directory.GetParent(Application.dataPath).FullName;
-            return Path.Combine(projectRoot, "advanced-mcp", "index.js");
+            return Path.Combine(projectRoot, "unity-mcp", "index.js");
         }
     }
 } 

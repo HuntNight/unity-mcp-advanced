@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "com.unity-bridge": {
-      "version": "file:../advanced-mcp/tools/unity-bridge/unity-extension",
+      "version": "file:../unity-mcp/tools/unity-bridge/unity-extension",
       "depth": 0,
       "source": "local",
       "dependencies": {

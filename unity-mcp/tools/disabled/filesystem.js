@@ -1056,13 +1056,13 @@ export const filesystemModule = {
           test_paths: {
             type: "array",
             items: { type: "string" },
-            default: [".", "claude-mcp", "claude-mcp/tools", "../", "C:\\localhost\\engine"],
+            default: [".", "unity-mcp", "unity-mcp/tools", "../", "C:\\localhost\\engine"],
             description: "Массив путей для тестирования"
           }
         }
       },
       handler: async (args) => {
-        const { test_paths = [".", "claude-mcp", "claude-mcp/tools", "../", "C:\\localhost\\engine"] } = args;
+        const { test_paths = [".", "unity-mcp", "unity-mcp/tools", "../", "C:\\localhost\\engine"] } = args;
 
         try {
           // Импортируем все функции из workspaceUtils
@@ -1143,7 +1143,7 @@ export const filesystemModule = {
           const additionalChecks = {
             workspace_exists: false,
             workspace_readable: false,
-            claude_mcp_exists: false,
+            unity_mcp_exists: false,
             tools_dir_exists: false
           };
 
@@ -1157,13 +1157,13 @@ export const filesystemModule = {
               additionalChecks.workspace_readable = true;
             } catch { }
 
-            const claudeMcpPath = resolveWorkspacePath('claude-mcp');
+            const unityMcpPath = resolveWorkspacePath('unity-mcp');
             try {
-              await fs.access(claudeMcpPath);
-              additionalChecks.claude_mcp_exists = true;
+              await fs.access(unityMcpPath);
+              additionalChecks.unity_mcp_exists = true;
             } catch { }
 
-            const toolsPath = resolveWorkspacePath('claude-mcp/tools');
+            const toolsPath = resolveWorkspacePath('unity-mcp/tools');
             try {
               await fs.access(toolsPath);
               additionalChecks.tools_dir_exists = true;
@@ -1184,7 +1184,7 @@ export const filesystemModule = {
               `🔧 **Git Root:** ${diagnostics.git_info.git_root || 'не найден'}\n\n` +
               `✅ **Workspace существует:** ${additionalChecks.workspace_exists}\n` +
               `✅ **Workspace читается:** ${additionalChecks.workspace_readable}\n` +
-              `✅ **claude-mcp существует:** ${additionalChecks.claude_mcp_exists}\n` +
+              `✅ **unity-mcp существует:** ${additionalChecks.unity_mcp_exists}\n` +
               `✅ **tools/ существует:** ${additionalChecks.tools_dir_exists}\n\n` +
               `📊 **Протестировано путей:** ${test_paths.length}\n` +
               `🔍 **Подробности в diagnostics объекте**`

@@ -1,5 +1,5 @@
 {
-  "name": "claude-enhanced-mcp",
+  "name": "unity-mcp",
   "version": "1.0.0",
   "description": "Набор MCP утилит",
   "type": "module",
@@ -16,12 +16,9 @@
   },
   "keywords": [
     "mcp",
-    "claude",
-    "enhanced",
-    "utilities",
     "unity",
     "terminal"
   ],
-  "author": "Claude MCP Tools",
+  "author": "Unity MCP Team",
   "license": "MIT"
 }
