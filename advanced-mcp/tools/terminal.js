@@ -1,11 +1,12 @@
 /**
- * 💻 TERMINAL TOOLS - Виртуальный MCP сервер для системы
+ * 💻 TERMINAL TOOLS - System MCP Module
  * 
- * 🚀 Все команды для работы с системой в одном модуле!
- * Системная информация, проверка портов, процессы - всё здесь!
+ * Provides essential system commands for diagnostics, monitoring, and interaction.
+ * Includes system info monitoring, port checking, process management, and user interaction.
  * 
- * 🤯 НОВАЯ ФИЧА: АВТОМАТИЧЕСКАЯ SYSTEM INFO В КАЖДОМ ОТВЕТЕ!
- * 🖥️ НОВАЯ ФИЧА: АВТОМАТИЧЕСКИЕ СИСТЕМНЫЕ СКРИНШОТЫ (через глобальный декоратор)!
+ * Features:
+ * - Automatic system info injection
+ * - Screenshot capabilities
  */
 
 import path from 'path';
@@ -19,46 +20,13 @@ import { getWorkspaceRoot, resolveWorkspacePath } from '../utils/workspaceUtils.
 // 💻 ЭКСПОРТ ВСЕХ TERMINAL КОМАНД
 export const terminalTools = [
   {
-    name: "echo",
-    description: "🔥 ЭХОЛОКАТОР! Твой терминальный попугай повторяет слова! 🔥\n\n" +
-      "🗣️ ГОВОРИТ ТЕБЕ: 'Скажи что-нибудь - я повторю и покажу что всё работает!'\n" +
-      "📊 ДАЕТ ДАННЫЕ: Твое сообщение в красивом формате с подтверждением\n" +
-      "💡 НАПРАВЛЯЕТ: Используй для тестирования связи с терминальными инструментами\n" +
-      "🐕 ТВОЙ ТЕРМИНАЛЬНЫЙ ПОПУГАЙ: Простейший способ проверить что MCP работает",
-    inputSchema: {
-      type: "object",
-      properties: {
-        message: { type: "string", description: "Сообщение для повтора" }
-      },
-      required: ["message"]
-    },
-    handler: async (args, { log, logInfo, logError, logSuccess }) => {
-      const { message } = args;
-
-      // 🧪 ТЕСТИРУЕМ ЛОГИРОВАНИЕ!
-      logInfo(`🧪 ТЕСТ: Получено сообщение для эха: ${message}`);
-      logSuccess(`✅ ТЕСТ: Эхо команда выполняется успешно`);
-      logError(`🔴 ТЕСТ: Это тестовая ошибка для проверки логов`);
-
-      // 🤖 ПРОСТО ВОЗВРАЩАЕМ ТЕКСТ - mcpServer автоматически обернёт в правильный формат!
-      return `🔥 **ECHO FROM TERMINAL TOOLS** 🔥\n\n` +
-        `📢 **Message:** ${message}\n\n` +
-        `✅ Эхо работает! Это Terminal Tools в действии!`;
-    }
-  },
-
-  {
     name: "system_info",
-    description: "📊 СИСТЕМНЫЙ ДИАГНОСТ! Твой цифровой доктор проверяет здоровье системы! 📊\n\n" +
-      "🗣️ ГОВОРИТ ТЕБЕ: 'Покажи мне систему - расскажу всё о портах, процессах, времени!'\n" +
-      "📊 ДАЕТ ДАННЫЕ: Время MSK, статус портов, количество Node.js процессов\n" +
-      "💡 НАПРАВЛЯЕТ: include_processes=true покажет детали всех Node.js процессов\n" +
-      "🐕 ТВОЙ СИСТЕМНЫЙ ДОКТОР: Мониторит порты 1337, 3000, 3001, 8080, 5000",
+    description: "Retrieves system diagnostic information including server time, port status, and Node.js process metrics. Provides real-time monitoring of key ports (1337, 3000, 3001, 8080, 5000) to verify service availability. Use `include_processes` to obtain a detailed list of active Node.js processes with PID and memory usage statistics.",
     inputSchema: {
       type: "object",
       properties: {
-        include_processes: { type: "boolean", default: false, description: "Включить список процессов" },
-        max_processes: { type: "number", default: 10, description: "Максимум процессов для показа" }
+        include_processes: { type: "boolean", default: false, description: "If set to true, includes a detailed list of running Node.js processes in the output." },
+        max_processes: { type: "number", default: 10, description: "Specifies the maximum number of processes to display when `include_processes` is enabled." }
       },
       required: []
     },
@@ -143,16 +111,12 @@ export const terminalTools = [
 
   {
     name: "check_port",
-    description: "🔍 ПОРТОВЫЙ ИНСПЕКТОР! Твой сетевой детектив проверяет порты! 🔍\n\n" +
-      "🗣️ ГОВОРИТ ТЕБЕ: 'Дай номер порта - скажу активен он или спит!'\n" +
-      "📊 ДАЕТ ДАННЫЕ: Статус порта (ACTIVE/CLOSED) с деталями netstat\n" +
-      "💡 НАПРАВЛЯЕТ: Используй для проверки запущенных серверов и сервисов\n" +
-      "🐕 ТВОЙ СЕТЕВОЙ ДЕТЕКТИВ: Использует netstat для точной диагностики",
+    description: "Checks the status of a specific network port to determine if it is active or closed. Utilizes system utilities (netstat/lsof) to interpret port activity. Useful for diagnosing connection issues or verifying that a server has started successfully.",
     inputSchema: {
       type: "object",
       properties: {
-        port: { type: "number", description: "Номер порта для проверки" },
-        protocol: { type: "string", enum: ["tcp", "udp"], default: "tcp", description: "Протокол для проверки" }
+        port: { type: "number", description: "The port number to inspect." },
+        protocol: { type: "string", enum: ["tcp", "udp"], default: "tcp", description: "The network protocol used for the check (TCP or UDP)." }
       },
       required: ["port"]
     },
@@ -181,15 +145,11 @@ export const terminalTools = [
   // 🔥 НОВЫЕ СТАБИЛЬНЫЕ ИНСТРУМЕНТЫ ДЛЯ MACOS!
   {
     name: "find_process",
-    description: "🔍 ОХОТНИК ЗА ПРОЦЕССАМИ! Твой системный следопыт находит программы! 🔍\n\n" +
-      "🗣️ ГОВОРИТ ТЕБЕ: 'Дай имя программы - найду все её процессы в системе!'\n" +
-      "📊 ДАЕТ ДАННЫЕ: Список найденных процессов с PID и использованием памяти\n" +
-      "💡 НАПРАВЛЯЕТ: Используй для поиска node, chrome, любых программ\n" +
-      "🐕 ТВОЙ СИСТЕМНЫЙ СЛЕДОПЫТ: Использует ps aux для надежного поиска процессов",
+    description: "Searches for running processes by name on the host system. Returns a list of matching processes including their Process IDs (PID) and memory usage. This tool is essential for identifying active applications or services, such as Node.js instances or browser sessions.",
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Имя процесса для поиска" }
+        name: { type: "string", description: "The name or keyword of the process to search for." }
       },
       required: ["name"]
     },
@@ -220,17 +180,13 @@ export const terminalTools = [
 
   {
     name: "safe_curl",
-    description: "🌐 ВЕБЛОКАТОР! Твой HTTP-курьер доставляет запросы без глюков! 🌐\n\n" +
-      "🗣️ ГОВОРИТ ТЕБЕ: 'Дай URL - отправлю GET/POST/PUT/DELETE запрос надежно!'\n" +
-      "📊 ДАЕТ ДАННЫЕ: Ответ сервера, статус код, заголовки, тело ответа\n" +
-      "💡 НАПРАВЛЯЕТ: Используй для API тестирования без проблем curl\n" +
-      "🐕 ТВОЙ HTTP КУРЬЕР: Стабильные запросы через нативный fetch Node.js",
+    description: "Executes HTTP requests to a specified URL using safe system calls. Supports standard HTTP methods (GET, POST, PUT, DELETE) to test API endpoints or retrieve web content. Returns the complete server response, including status codes, headers, and body content.",
     inputSchema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "URL для запроса" },
-        method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE"], default: "GET", description: "HTTP метод" },
-        data: { type: "string", description: "Данные для POST/PUT запросов" }
+        url: { type: "string", description: "The target URL for the HTTP request." },
+        method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE"], default: "GET", description: "The HTTP method to use (GET, POST, PUT, DELETE). Default is GET." },
+        data: { type: "string", description: "The payload data (string) to send with POST or PUT requests." }
       },
       required: ["url"]
     },
@@ -278,40 +234,36 @@ export const terminalTools = [
 
   {
     name: "wait_for_user",
-    description: "⏳ ИНТЕРАКТИВНЫЙ ПОМОЩНИК! Твой человеческий интерфейс для вопросов и уточнений! ⏳\n\n" +
-      "🗣️ ГОВОРИТ ТЕБЕ: 'Нужно что-то спросить? Покажу вопрос пользователю и получу его ответ!'\n" +
-      "📊 ДАЕТ ДАННЫЕ: Текстовый ответ пользователя на твой вопрос или подтверждение действия\n" +
-      "💡 НАПРАВЛЯЕТ: expect_answer=true для получения текста, false для простого подтверждения\n" +
-      "🐕 ТВОЙ ИНТЕРАКТИВНЫЙ ИНТЕРФЕЙС: Мост между ИИ и человеком для диалога и уточнений",
+    description: "Pauses execution to request input or confirmation from the user. Displays a system dialog or terminal prompt to facilitate human-in-the-loop interaction. Can be used to ask clarifying questions or request manual approval for critical actions.",
     inputSchema: {
       type: "object",
       properties: {
-        request: { type: "string", description: "Вопрос или просьба к пользователю" },
-        details: { type: "string", description: "Дополнительные детали (опционально)" },
-        expect_answer: { 
-          type: "boolean", 
-          default: false, 
-          description: "true = ожидать текстовый ответ, false = простое подтверждение" 
+        request: { type: "string", description: "The question or instruction to present to the user." },
+        details: { type: "string", description: "Optional additional context or information to display." },
+        expect_answer: {
+          type: "boolean",
+          default: false,
+          description: "If true, waits for text input from the user. If false, waits only for a confirmation (OK/Cancel)."
         },
         answer_placeholder: {
           type: "string",
-          default: "Введите ваш ответ...",
-          description: "Подсказка для поля ввода (только при expect_answer=true)"
+          default: "Enter your answer...",
+          description: "Placeholder text for the input field when `expect_answer` is true."
         }
       },
       required: ["request"]
     },
     handler: async (args) => {
-      const { 
-        request, 
-        details = '', 
+      const {
+        request,
+        details = '',
         expect_answer = false,
         answer_placeholder = "Введите ваш ответ..."
       } = args;
       const os = process.platform;
-      
+
       const title = expect_answer ? "❓ ВОПРОС ОТ ИИ ❓" : "⏳ ПРОСЬБА К ПОЛЬЗОВАТЕЛЮ ⏳";
-      const fullRequest = details 
+      const fullRequest = details
         ? `🎯 ${request}\n\n📝 Детали: ${details}`
         : `🎯 ${request}`;
 
@@ -354,11 +306,11 @@ export const terminalTools = [
             const command = os === 'win32'
               ? `start cmd /k "echo ${title} && echo. && echo ${fullRequest} && echo. && echo 📝 Введите ваш ответ в чат Cursor && echo. && pause"`
               : `x-terminal-emulator -e "bash -c 'echo \\"${title}\\"; echo; echo \\"${fullRequest}\\"; echo; echo \\"📝 Введите ваш ответ в чат Cursor\\"; read -p \\"Нажмите Enter...\\"'"`
-            
+
             await spawnBackground(command);
             return "❓ Пожалуйста, введите ваш ответ в следующем сообщении в чате.";
           } else {
-            const command = os === 'win32' 
+            const command = os === 'win32'
               ? `start cmd /k "echo ${title} && echo. && echo ${fullRequest} && echo. && echo ✅ Закрой этот терминал когда выполнишь && echo. && echo 🤝 Жду твоего действия... && echo. && pause"`
               : `x-terminal-emulator -e "bash -c 'echo \\"${title}\\"; echo; echo \\"${fullRequest}\\"; echo; read -p \\"Нажмите Enter, когда закончите...\\"'"`
 
@@ -375,18 +327,17 @@ export const terminalTools = [
 
 export const terminalModule = {
   namespace: "terminal",
-  description: "Системные инструменты",
+  description: "System Tools",
   tools: terminalTools
 };
 
 /**
- * 💻 TERMINAL TOOLS - МОДУЛЬ ЗАВЕРШЁН!
+ * 💻 TERMINAL TOOLS - MODULE READY
  * 
- * ✅ Все системные команды в одном месте
- * ✅ Проверка портов и процессов
- * ✅ Чистый экспорт для импорта в index.js
- * ✅ 🤯 АВТОМАТИЧЕСКАЯ SYSTEM INFO В КАЖДОМ ОТВЕТЕ!
- * ✅ Готов к использованию!
+ * ✅ All system commands in one place
+ * ✅ Port and process checking
+ * ✅ Clean export for index.js
+ * ✅ Automatic System Info injection
  */
 
 

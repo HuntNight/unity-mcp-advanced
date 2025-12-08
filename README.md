@@ -87,7 +87,7 @@ npm install
 ```json
 {
   "mcpServers": {
-    "enhanced-mcp": {
+    "unity-mcp": {
       "command": "node",
       "args": [
         "/path/to/your/project/advanced-mcp/index.js"
@@ -134,11 +134,12 @@ npm install
 // Создание скриншота Unity
 unity_screenshot()
 
-// Выполнение C# кода  
+// Выполнение C# кода (statements-only)
 unity_execute({
   code: `
     var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
     cube.name = "AI_Cube";
+    cube.transform.position = new Vector3(0,1,0);
     return "Куб создан!";
   `
 })
@@ -153,31 +154,13 @@ check_port({ port: 7777 })
 
 ### Продвинутые примеры
 
-#### 🎨 Создание материалов
+#### 🎨 Создание материалов (statements-only)
 ```csharp
-public class MaterialCreator {
-    public Material CreateMaterial(Color color, float metallic) {
-        var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        material.color = color;
-        material.SetFloat("_Metallic", metallic);
-        return material;
-    }
-}
-
-var creator = new MaterialCreator();
-var redMetal = creator.CreateMaterial(Color.red, 0.8f);
-```
-
-#### 🔍 LINQ анализ
-```csharp
-using System.Linq;
-
-var renderers = Object.FindObjectsOfType<Renderer>();
-var materialGroups = renderers
-    .GroupBy(r => r.material.name)
-    .ToDictionary(g => g.Key, g => g.Count());
-    
-return $"Найдено материалов: {materialGroups.Count}";
+var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+mat.color = new Color(0.9f, 0.2f, 0.2f);
+var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+go.GetComponent<Renderer>().material = mat;
+return "Материал применён";
 ```
 
 ## 🏗️ Архитектура
@@ -258,7 +241,7 @@ Editor/
 ### Автоматические скриншоты
 ```javascript
 // Каждый инструмент может включить системный скриншот
-terminal_echo({ message: "test", systemScreenshot: true })
+terminal_system_info({ systemScreenshot: true })
 ```
 
 ### Unity API покрытие

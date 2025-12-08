@@ -37,7 +37,26 @@ namespace UnityBridge
                 return result;
             }
         }
-        
+
+        public static List<string> GetRecentErrors(int maxCount = 5, bool errorsOnly = true)
+        {
+            lock (errors)
+            {
+                var filtered = errors.AsEnumerable();
+
+                // Фильтровать только Error/Exception, игнорировать Warning
+                if (errorsOnly)
+                    filtered = filtered.Where(e => e.Contains("[Unity Error]"));
+
+                var result = filtered
+                    .TakeLast(maxCount)  // Только последние N
+                    .ToList();
+
+                errors.Clear();
+                return result;
+            }
+        }
+
         public static bool HasErrors() => errors.Count > 0;
         
         public static bool HasCompilationErrors()
@@ -80,8 +99,7 @@ namespace UnityBridge
                         AddToCollection($"[Unity Error] {logString}");
                     break;
                 case LogType.Warning:
-                    if (!ShouldIgnoreWarning(logString))
-                        AddToCollection($"[Unity Warning] {logString}");
+                    // ПОЛНОСТЬЮ игнорируем warnings
                     break;
             }
         }

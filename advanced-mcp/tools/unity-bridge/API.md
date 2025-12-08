@@ -86,21 +86,6 @@ http://localhost:7777
     "message": "Screenshot captured", 
     "errors": []                      // Ошибки Unity из ErrorBuffer
 }
-```
-
-### 3. **POST /api/camera_screenshot**
-
-Создание скриншота с произвольной позиции камеры
-
-#### Запрос
-```json
-{
-    "position": [x, y, z],    // Позиция камеры (массив из 3 чисел)
-    "target": [x, y, z],      // На что смотрит камера (массив из 3 чисел)
-    "fov": 60,                // Поле зрения (опционально, по умолчанию 60)
-    "width": 1920,            // Ширина (опционально, по умолчанию 1920)
-    "height": 1080,           // Высота (опционально, по умолчанию 1080)
-    "taskId": "string"        // Уникальный ID задачи
 }
 ```
 
@@ -182,22 +167,6 @@ http://localhost:7777
 **Базовый режим:**
 ```json
 {
-    "detailed": false,
-    "taskId": "hierarchy-basic"
-}
-```
-
-**Детальный режим:**
-```json
-{
-    "detailed": true,
-    "taskId": "hierarchy-detailed"
-}
-```
-
-## 🔧 Статусы ответов
-
-### Success Response
 ```json
 {
     "status": "success",
