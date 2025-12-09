@@ -155,18 +155,47 @@ namespace UnityBridge
         public static OperationResult SetPlayMode(UnityRequest request)
         {
             var enabled = request.GetValue("enabled", true);
-            
-            if (EditorApplication.isPlaying == enabled)
+
+            try
             {
-                return OperationResult.Ok($"Play Mode is already {(enabled ? "enabled" : "disabled")}");
+                if (EditorApplication.isPlaying == enabled)
+                {
+                    return OperationResult.Ok($"Play Mode is already {(enabled ? "enabled" : "disabled")}");
+                }
+
+                // Первичная попытка — синхронно, чтобы сразу узнать об ошибке
+                try
+                {
+                    EditorApplication.isPlaying = enabled;
+                    if (EditorApplication.isPlaying == enabled)
+                    {
+                        return OperationResult.Ok($"Play Mode switched: {(enabled ? "enabled" : "disabled")}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return OperationResult.Fail($"Play Mode change failed: {ex.Message}");
+                }
+
+                // Фолбэк: schedule через delayCall (например, если сразу не сработало)
+                EditorApplication.delayCall += () =>
+                {
+                    try
+                    {
+                        EditorApplication.isPlaying = enabled;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"Play Mode delayCall failed: {ex.Message}");
+                    }
+                };
+
+                return OperationResult.Ok($"Play Mode switch scheduled (retry): {(enabled ? "enabled" : "disabled")}, current state: {(EditorApplication.isPlaying ? "enabled" : "disabled")}");
             }
-            
-            // Fix: Use delayCall to prevent immediate thread abort when stopping play mode
-            EditorApplication.delayCall += () => 
+            catch (Exception ex)
             {
-                EditorApplication.isPlaying = enabled;
-            };
-            return OperationResult.Ok($"Play Mode switch scheduled: {(enabled ? "enabled" : "disabled")}");
+                return OperationResult.Fail($"Play Mode handler error: {ex.Message}");
+            }
         }
     }
 }

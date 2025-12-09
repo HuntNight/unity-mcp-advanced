@@ -206,10 +206,21 @@ namespace UnityBridge
                 if (timedOut || emitted >= maxCount) break;
             }
 
+            bool truncated = (maxResults > 0 && matched > emitted) || timedOut;
             var header = $"🏞️  Scene: {scene.name}\n" +
                 $"📦 Path: {pathFilter ?? "(root)"} | max_depth={maxDepth}\n" +
                 $"📄 Limit: {(maxResults <= 0 ? "∞" : maxResults.ToString())}\n" +
-                $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}\n\n";
+                $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}\n";
+
+            if (truncated)
+            {
+                sb.AppendLine("⚠️ Results truncated by limit or timeout");
+                sb.AppendLine();
+            }
+            else
+            {
+                sb.AppendLine();
+            }
 
             if (summary)
             {
@@ -381,11 +392,12 @@ namespace UnityBridge
             }
 
             var sb = new System.Text.StringBuilder();
+            bool truncated = (maxResults > 0 && emitted < matched) || timedOut;
             sb.AppendLine($"🏞️  Scene: {scene.name}");
             sb.AppendLine($"🔎 Filters: nameGlob='{nameGlob}', nameRegex='{nameRegex}', tagGlob='{tagGlob}', any=[{string.Join(",", componentsAny)}], all=[{string.Join(",", componentsAll)}]");
             sb.AppendLine($"📦 Path: {pathFilter ?? "(root)"} | include_inactive={includeInactive} | max_depth={maxDepth}");
             sb.AppendLine($"📄 Paging: offset={offset}, limit={(maxResults <= 0 ? "∞" : maxResults.ToString())}");
-            sb.AppendLine($"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}");
+            sb.AppendLine($"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}");
             sb.AppendLine();
             sb.AppendLine("📋 Results:");
 
@@ -522,13 +534,14 @@ namespace UnityBridge
 
             // Header
             var selectPreview = string.Join(", ", selectList);
+            bool truncated = (maxResults > 0 && emitted < matched) || timedOut;
             sb.Insert(0,
                 $"🏞️  Scene: {scene.name}\n" +
                 $"🎯 Select: [{selectPreview}]\n" +
                 (!string.IsNullOrEmpty(whereExpr) ? $"🔎 Where: {whereExpr}\n" : string.Empty) +
                 $"📦 Path: {pathFilter ?? "(root)"} | max_depth={maxDepth}\n" +
                 $"📄 Limit: {(maxResults <= 0 ? "∞" : maxResults.ToString())}\n" +
-                $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}\n\n" +
+                $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}\n\n" +
                 "📋 Results:\n");
 
             if (emitted == 0)

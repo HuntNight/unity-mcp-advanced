@@ -8,6 +8,13 @@
  */
 
 import axios from 'axios';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, '..', '..');
+const SCREENSHOT_PATH = path.join(ROOT_DIR, 'unity-mcp-screenshot.png');
 
 const UNITY_BASE_URL = 'http://localhost:7777';
 
@@ -149,6 +156,25 @@ async function handleUnityRequest(endpoint, data = {}, timeout = 10000) {
   }
 }
 
+/**
+ * Сохранение изображения из MCP content в общий файл и возврат пути
+ */
+async function saveScreenshotIfPresent(mcpResponse) {
+  if (!mcpResponse || !Array.isArray(mcpResponse.content)) return mcpResponse;
+  const img = mcpResponse.content.find((c) => c?.type === 'image' && typeof c.data === 'string');
+  if (!img) return mcpResponse;
+
+  try {
+    await fs.rm(SCREENSHOT_PATH, { force: true });
+    const buffer = Buffer.from(img.data, 'base64');
+    await fs.writeFile(SCREENSHOT_PATH, buffer);
+    mcpResponse.content.unshift({ type: 'text', text: `Saved screenshot: ${SCREENSHOT_PATH}` });
+  } catch (err) {
+    mcpResponse.content.unshift({ type: 'text', text: `Failed to save screenshot: ${err.message}` });
+  }
+  return mcpResponse;
+}
+
 // Unity инструменты
 const unityTools = [
   {
@@ -183,7 +209,8 @@ const unityTools = [
       if (typeof params?.width === 'number') requestBody.width = params.width;
       if (typeof params?.height === 'number') requestBody.height = params.height;
       if (typeof params?.view_type === 'string') requestBody.view_type = params.view_type;
-      return await handleUnityRequest('/api/screenshot', requestBody);
+      const resp = await handleUnityRequest('/api/screenshot', requestBody);
+      return await saveScreenshotIfPresent(resp);
     }
   },
 
@@ -240,7 +267,8 @@ const unityTools = [
         height: params.height || 1080
       };
 
-      return await handleUnityRequest('/api/camera_screenshot', requestBody, 20000);
+      const resp = await handleUnityRequest('/api/camera_screenshot', requestBody, 20000);
+      return await saveScreenshotIfPresent(resp);
     }
   },
 
