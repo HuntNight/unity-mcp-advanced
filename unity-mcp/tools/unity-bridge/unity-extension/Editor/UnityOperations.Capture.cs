@@ -40,14 +40,38 @@ namespace UnityBridge
         {
             try
             {
-                var position = ParseVector3(request.Data.GetValueOrDefault("position"));
-                var target = ParseVector3(request.Data.GetValueOrDefault("target"));
+                var includeInactive = request.GetValue("include_inactive", true);
                 var fov = request.GetValue("fov", 60f);
                 var width = Math.Max(256, Math.Min(4096, request.GetValue("width", 1920)));
                 var height = Math.Max(256, Math.Min(4096, request.GetValue("height", 1080)));
-                
-                var base64 = CaptureFromPosition(position, target, fov, width, height);
-                var message = $"Camera screenshot from {position} to {target} ({fov}° FOV)";
+                var selection = ResolveSceneScope(request, includeInactive);
+                var targetObject = ResolveObject(selection, request);
+                var hasObjectSelector = request.Data.ContainsKey("instance_id") || request.Data.ContainsKey("path") || request.Data.ContainsKey("name");
+
+                string base64;
+                string message;
+
+                if (targetObject != null)
+                {
+                    var existingCamera = targetObject.GetComponent<Camera>();
+                    if (existingCamera == null)
+                        return OperationResult.Fail("Target object does not contain a Camera component.", "CAMERA_NOT_FOUND");
+
+                    base64 = CaptureFromExistingCamera(existingCamera, width, height);
+                    message = $"Camera screenshot from existing camera {BuildPath(targetObject)}";
+                }
+                else
+                {
+                    if (hasObjectSelector)
+                        return OperationResult.Fail("Requested camera object was not found in the selected scope.", "OBJECT_NOT_FOUND");
+                    if (!request.Data.ContainsKey("position") || !request.Data.ContainsKey("target"))
+                        return OperationResult.Fail("Either an existing camera selector or both position and target are required.", "VALIDATION_ERROR");
+
+                    var position = ParseVector3(request.Data.GetValueOrDefault("position"));
+                    var target = ParseVector3(request.Data.GetValueOrDefault("target"));
+                    base64 = CaptureFromPosition(position, target, fov, width, height);
+                    message = $"Camera screenshot from {position} to {target} ({fov}° FOV)";
+                }
                 
                 return OperationResult.Ok(message, new ImagePayload(base64));
             }
@@ -184,6 +208,34 @@ namespace UnityBridge
             finally
             {
                 UnityEngine.Object.DestroyImmediate(cameraObj);
+            }
+        }
+
+        private static string CaptureFromExistingCamera(Camera sourceCamera, int width, int height)
+        {
+            var renderTexture = new RenderTexture(width, height, 24);
+            var originalTargetTexture = sourceCamera.targetTexture;
+            var originalActive = RenderTexture.active;
+
+            try
+            {
+                sourceCamera.targetTexture = renderTexture;
+                sourceCamera.Render();
+
+                RenderTexture.active = renderTexture;
+                var texture = new Texture2D(width, height, TextureFormat.RGB24, false);
+                texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                texture.Apply();
+
+                var imageBytes = texture.EncodeToPNG();
+                UnityEngine.Object.DestroyImmediate(texture);
+                return Convert.ToBase64String(imageBytes);
+            }
+            finally
+            {
+                sourceCamera.targetTexture = originalTargetTexture;
+                RenderTexture.active = originalActive;
+                UnityEngine.Object.DestroyImmediate(renderTexture);
             }
         }
         

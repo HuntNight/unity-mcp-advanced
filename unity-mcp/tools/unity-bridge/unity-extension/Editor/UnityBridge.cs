@@ -1,26 +1,35 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using UnityEngine;
 using UnityEditor;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace UnityBridge
 {
-    /// <summary>
-    /// Главный композитор Unity Bridge - новая функциональная архитектура
-    /// Объединяет все модули в единый пайплайн обработки
-    /// Заменяет сложный UnityBridgeAPI
-    /// </summary>
     public static class UnityBridge
     {
         private static HttpServer server;
-        private static readonly Queue<Action> mainThreadQueue = new Queue<Action>();
+        private static readonly Queue<BridgeWorkItem> mainThreadQueue = new Queue<BridgeWorkItem>();
         private static readonly object queueLock = new object();
-        private static readonly Dictionary<string, object> pendingResults = new Dictionary<string, object>();
-        private static readonly object resultsLock = new object();
+        private static readonly int mainThreadId;
+        private static int currentPort = 7777;
+
+        private sealed class BridgeWorkItem
+        {
+            public Func<OperationResult> Operation;
+            public ManualResetEventSlim WaitHandle;
+            public OperationResult Result;
+            public Exception Error;
+        }
         
         static UnityBridge()
         {
+            mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveEditorAssembly;
             EditorApplication.update += ProcessMainThreadQueue;
         }
         
@@ -28,25 +37,33 @@ namespace UnityBridge
         {
             try
             {
-                // 🚀 Настройка UTF-8 кодировки для поддержки кириллицы
                 try
                 {
                     System.Console.OutputEncoding = System.Text.Encoding.UTF8;
                 }
                 catch
                 {
-                    // Игнорируем ошибки настройки кодировки консоли
                 }
                 
+                if (server != null && currentPort != port)
+                    StopServer();
+
+                currentPort = port;
                 ErrorCollector.AddInfo("Starting Unity Bridge...");
-                
-                server = new HttpServer(port, HandleRequest);
-                var started = server.Start();
+
+                var newServer = new HttpServer(port, HandleRequest);
+                var started = newServer.Start();
                 
                 if (started)
+                {
+                    server = newServer;
                     ErrorCollector.AddInfo($"Unity Bridge started on port {port}");
+                }
                 else
+                {
+                    server = null;
                     ErrorCollector.AddError("Failed to start Unity Bridge server");
+                }
                     
                 return started;
             }
@@ -73,144 +90,158 @@ namespace UnityBridge
             }
         }
         
-        public static bool IsRunning => server != null;
+        public static bool IsRunning => server != null && server.IsRunning;
         
-        // Главный обработчик запросов (функциональный пайплайн)
         private static Dictionary<string, object> HandleRequest(string endpoint, Dictionary<string, object> data)
         {
+            var requestId = Guid.NewGuid().ToString("N");
+            var stopwatch = Stopwatch.StartNew();
+            var logCursor = ErrorCollector.GetCursor();
             try
             {
-                // Проверка компиляции
                 var compilationError = ErrorCollector.GetCompilationStatus();
                 if (!string.IsNullOrEmpty(compilationError))
-                    return ResponseBuilder.BuildCompilationErrorResponse();
+                    return ResponseBuilder.BuildCompilationErrorResponse(requestId, endpoint, stopwatch.ElapsedMilliseconds);
                 
-                // Создание запроса
                 var request = new UnityRequest(endpoint, data);
-                
-                // Маршрутизация и выполнение
                 var result = RouteRequest(request);
-                
-                // Построение ответа
                 var allowLarge = request.GetValue("allow_large_response", false);
-                return ResponseBuilder.BuildResponse(result, allowLarge);
+                stopwatch.Stop();
+                var logs = ErrorCollector.GetEntriesSince(logCursor);
+                return ResponseBuilder.BuildResponse(result, allowLarge, requestId, endpoint, stopwatch.ElapsedMilliseconds, logs);
             }
             catch (Exception ex)
             {
                 ErrorCollector.AddError($"Request handling error: {ex.Message}");
-                return ResponseBuilder.BuildErrorResponse($"Request failed: {ex.Message}");
+                stopwatch.Stop();
+                var logs = ErrorCollector.GetEntriesSince(logCursor);
+                return ResponseBuilder.BuildErrorResponse($"Request failed: {ex.Message}", requestId, endpoint, stopwatch.ElapsedMilliseconds, logs);
             }
         }
         
-        // Функциональная маршрутизация запросов
         private static OperationResult RouteRequest(UnityRequest request)
         {
             switch (request.Endpoint)
             {
+                case "/api/health":
+                    return ExecuteOnMainThread(() => UnityOperations.GetBridgeHealth(request), request);
+
                 case "/api/screenshot":
-                    return ExecuteOnMainThread(() => UnityOperations.TakeScreenshot(request));
+                    return ExecuteOnMainThread(() => UnityOperations.TakeScreenshot(request), request);
                     
                 case "/api/camera_screenshot":
-                    return ExecuteOnMainThread(() => UnityOperations.TakeCameraScreenshot(request));
+                    return ExecuteOnMainThread(() => UnityOperations.TakeCameraScreenshot(request), request);
                     
                 case "/api/execute":
-                    return ExecuteOnMainThread(() => UnityOperations.ExecuteCode(request));
+                    return ExecuteOnMainThread(() => UnityOperations.ExecuteCode(request), request);
                     
                 case "/api/scene_hierarchy":
-                    return ExecuteOnMainThread(() => UnityOperations.GetSceneHierarchySimple(request));
+                    return ExecuteOnMainThread(() => UnityOperations.GetSceneHierarchySimple(request), request);
                 
                 case "/api/scene_radius":
-                    return ExecuteOnMainThread(() => UnityOperations.GetObjectsInRadius(request));
+                    return ExecuteOnMainThread(() => UnityOperations.GetObjectsInRadius(request), request);
                 
                 case "/api/scene_grep":
-                    return ExecuteOnMainThread(() => UnityOperations.SceneGrep(request));
+                    return ExecuteOnMainThread(() => UnityOperations.SceneGrep(request), request);
+
+                case "/api/list_scenes":
+                    return ExecuteOnMainThread(() => UnityOperations.ListScenes(request), request);
+
+                case "/api/find_objects":
+                    return ExecuteOnMainThread(() => UnityOperations.FindObjects(request), request);
+
+                case "/api/inspect_object":
+                    return ExecuteOnMainThread(() => UnityOperations.InspectObject(request), request);
+
+                case "/api/set_transform":
+                    return ExecuteOnMainThread(() => UnityOperations.SetTransform(request), request);
+
+                case "/api/set_light":
+                    return ExecuteOnMainThread(() => UnityOperations.SetLight(request), request);
+
+                case "/api/set_camera":
+                    return ExecuteOnMainThread(() => UnityOperations.SetCamera(request), request);
+
+                case "/api/set_active":
+                    return ExecuteOnMainThread(() => UnityOperations.SetActive(request), request);
 
                 case "/api/play_mode":
-                    return ExecuteOnMainThread(() => UnityOperations.SetPlayMode(request));
+                    return ExecuteOnMainThread(() => UnityOperations.SetPlayMode(request), request);
                     
                 default:
                     return OperationResult.Fail($"Unknown endpoint: {request.Endpoint}");
             }
         }
         
-        // Выполнение на главном потоке Unity
-        private static OperationResult ExecuteOnMainThread(Func<OperationResult> operation)
+        private static OperationResult ExecuteOnMainThread(Func<OperationResult> operation, UnityRequest request)
         {
             if (IsMainThread())
                 return operation();
-            
-            var taskId = Guid.NewGuid().ToString();
-            var completed = false;
-            OperationResult result = default;
-            
-            EnqueueMainThreadTask(() =>
+
+            var workItem = new BridgeWorkItem
             {
-                try
-                {
-                    result = operation();
-                }
-                catch (Exception ex)
-                {
-                    result = OperationResult.Fail($"Main thread execution error: {ex.Message}");
-                }
-                finally
-                {
-                    completed = true;
-                }
-            });
-            
-            // Ожидание результата
-            var timeout = DateTime.UtcNow.AddSeconds(30);
-            while (!completed && DateTime.UtcNow < timeout)
-            {
-                Thread.Sleep(50);
-            }
-            
-            if (!completed)
-                return OperationResult.Fail("Operation timed out");
-                
-            return result;
+                Operation = operation,
+                WaitHandle = new ManualResetEventSlim(false)
+            };
+
+            EnqueueMainThreadTask(workItem);
+
+            var timeoutMs = request.GetValue("timeout_ms", 45000);
+            if (!workItem.WaitHandle.Wait(timeoutMs))
+                return OperationResult.Fail($"Operation timed out after {timeoutMs} ms");
+
+            if (workItem.Error != null)
+                return OperationResult.Fail($"Main thread execution error: {workItem.Error.Message}");
+
+            return workItem.Result;
         }
         
-        private static void EnqueueMainThreadTask(Action action)
+        private static void EnqueueMainThreadTask(BridgeWorkItem workItem)
         {
             lock (queueLock)
             {
-                mainThreadQueue.Enqueue(action);
+                mainThreadQueue.Enqueue(workItem);
             }
         }
         
         private static void ProcessMainThreadQueue()
         {
-            lock (queueLock)
+            while (true)
             {
-                var processedCount = 0;
-                while (mainThreadQueue.Count > 0 && processedCount < 10) // Ограничение для производительности
+                BridgeWorkItem workItem = null;
+                lock (queueLock)
                 {
-                    try
-                    {
-                        var action = mainThreadQueue.Dequeue();
-                        action();
-                        processedCount++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError($"Main thread task error: {ex.Message}");
-                    }
+                    if (mainThreadQueue.Count == 0)
+                        return;
+                    workItem = mainThreadQueue.Dequeue();
+                }
+
+                try
+                {
+                    workItem.Result = workItem.Operation();
+                }
+                catch (Exception ex)
+                {
+                    workItem.Error = ex;
+                    Debug.LogError($"Main thread task error: {ex.Message}");
+                }
+                finally
+                {
+                    workItem.WaitHandle.Set();
+                    workItem.WaitHandle.Dispose();
                 }
             }
         }
         
         private static bool IsMainThread()
         {
-            return Thread.CurrentThread.ManagedThreadId == 1; // Unity main thread обычно имеет ID 1
+            return Thread.CurrentThread.ManagedThreadId == mainThreadId;
         }
         
-        // Утилитарные функции
         public static string GetStatus()
         {
             var status = IsRunning ? "Running" : "Stopped";
-            var errors = ErrorCollector.HasErrors() ? $" ({ErrorCollector.GetAndClearErrors().Count} errors)" : "";
+            var errors = ErrorCollector.HasErrors() ? $" ({ErrorCollector.GetRecentErrors(maxCount: 20, errorsOnly: false).Count} logs)" : "";
             var compilation = ErrorCollector.HasCompilationErrors() ? " [COMPILATION ERRORS]" : "";
             
             return $"Unity Bridge: {status}{errors}{compilation}";
@@ -226,6 +257,49 @@ namespace UnityBridge
         {
             ErrorCollector.AddError(message);
             Debug.LogError($"[Unity Bridge] {message}");
+        }
+
+        private static Assembly ResolveEditorAssembly(object sender, ResolveEventArgs args)
+        {
+            try
+            {
+                var requestedName = new AssemblyName(args.Name).Name;
+                if (string.IsNullOrEmpty(requestedName))
+                    return null;
+
+                var loadedAssembly = AppDomain.CurrentDomain
+                    .GetAssemblies()
+                    .FirstOrDefault(assembly => string.Equals(assembly.GetName().Name, requestedName, StringComparison.OrdinalIgnoreCase));
+                if (loadedAssembly != null)
+                    return loadedAssembly;
+
+                var candidates = new[]
+                {
+                    Path.Combine(EditorApplication.applicationContentsPath, "Managed", $"{requestedName}.dll"),
+                    Path.Combine(EditorApplication.applicationContentsPath, "NetStandard", "compat", "2.1.0", "shims", "netstandard", $"{requestedName}.dll"),
+                    Path.Combine(EditorApplication.applicationContentsPath, "NetStandard", "compat", "2.1.0", "shims", "netfx", $"{requestedName}.dll"),
+                    Path.Combine(EditorApplication.applicationContentsPath, "MonoBleedingEdge", "lib", "mono", "4.7.1-api", $"{requestedName}.dll"),
+                    Path.Combine(EditorApplication.applicationContentsPath, "MonoBleedingEdge", "lib", "mono", "4.8-api", $"{requestedName}.dll")
+                };
+
+                foreach (var candidate in candidates)
+                {
+                    if (File.Exists(candidate))
+                        return Assembly.LoadFrom(candidate);
+                }
+
+                var searchRoot = EditorApplication.applicationContentsPath;
+                foreach (var dll in Directory.GetFiles(searchRoot, $"{requestedName}.dll", SearchOption.AllDirectories))
+                {
+                    return Assembly.LoadFrom(dll);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"AssemblyResolve failed for {args.Name}: {ex.Message}");
+            }
+
+            return null;
         }
     }
 } 

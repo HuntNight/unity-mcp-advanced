@@ -4,41 +4,9 @@ using System.Linq;
 
 namespace UnityBridge
 {
-    /// <summary>
-    /// Функциональный построитель ответов Unity Bridge
-    /// Преобразует результаты операций в единый формат сообщений
-    /// </summary>
     public static class ResponseBuilder
     {
-        public static Dictionary<string, object> BuildResponse(OperationResult result, List<string> errors = null)
-        {
-            var messages = new List<UnityMessage>();
-            
-            // Добавляем основное сообщение
-            if (result.Success)
-            {
-                messages.Add(UnityMessage.TextMessage(result.Message));
-                
-                // Добавляем изображение если есть
-                if (result.Data is string base64Data && IsBase64Image(base64Data))
-                    messages.Add(UnityMessage.Image(base64Data, "Unity Screenshot"));
-                
-                // Добавляем данные как текст если есть (без ограничений длины!)
-                else if (result.Data != null)
-                    messages.Add(UnityMessage.TextMessage($"Result: {FormatData(result.Data)}"));
-            }
-            else
-            {
-                messages.Add(UnityMessage.TextMessage($"Error: {result.Error}"));
-            }
-            
-            // Добавляем ошибки Unity
-            AddUnityErrors(messages, errors ?? ErrorCollector.GetAndClearErrors());
-
-            return CreateResponse(messages);
-        }
-
-        public static Dictionary<string, object> BuildResponse(OperationResult result, bool allowLargeResponse, List<string> errors = null)
+        public static Dictionary<string, object> BuildResponse(OperationResult result, bool allowLargeResponse, string requestId, string endpoint, long durationMs, List<string> logs = null)
         {
             var messages = new List<UnityMessage>();
 
@@ -46,29 +14,21 @@ namespace UnityBridge
             {
                 if (!string.IsNullOrEmpty(result.Message))
                     messages.Add(UnityMessage.TextMessage(result.Message));
-                if (result.Data is ImagePayload img)
-                {
-                    messages.Add(UnityMessage.Image(img.Base64, "Unity Screenshot"));
-                }
-                else if (result.Data is string s)
-                {
-                    if (!string.IsNullOrEmpty(s)) messages.Add(UnityMessage.TextMessage(s));
-                }
+                if (result.Data is ImagePayload imagePayload)
+                    messages.Add(UnityMessage.Image(imagePayload.Base64, "Unity Screenshot"));
+                else if (result.Data is string resultText && !string.IsNullOrEmpty(resultText))
+                    messages.Add(UnityMessage.TextMessage(resultText));
                 else if (result.Data != null)
-                {
                     messages.Add(UnityMessage.TextMessage(FormatData(result.Data)));
-                }
             }
             else
             {
                 messages.Add(UnityMessage.TextMessage($"Error: {result.Error}"));
             }
+            var effectiveLogs = logs ?? new List<string>();
+            if (effectiveLogs.Count > 0)
+                AddUnityErrors(messages, effectiveLogs);
 
-            var unityErrors = errors ?? ErrorCollector.GetRecentErrors(maxCount: 5, errorsOnly: true);
-            if (unityErrors.Count > 0)
-                AddUnityErrors(messages, unityErrors);
-
-            // Size guard: truncate total text length to 5000 unless explicitly allowed
             try
             {
                 if (!allowLargeResponse)
@@ -81,7 +41,6 @@ namespace UnityBridge
                             var content = messages[i].Content;
                             if (accumulated + content.Length > 5000)
                             {
-                                // Обрезать текущее сообщение - создать новый immutable объект
                                 int remainingChars = 5000 - accumulated;
                                 string truncatedContent;
                                 if (remainingChars > 15)
@@ -93,10 +52,8 @@ namespace UnityBridge
                                     truncatedContent = "[truncated...]";
                                 }
 
-                                // Заменить сообщение новым объектом (immutable struct)
                                 messages[i] = UnityMessage.TextMessage(truncatedContent);
 
-                                // Удалить все последующие сообщения
                                 if (i + 1 < messages.Count)
                                 {
                                     messages.RemoveRange(i + 1, messages.Count - i - 1);
@@ -110,17 +67,18 @@ namespace UnityBridge
             }
             catch { /* ignore guard failures */ }
 
-            return CreateResponse(messages);
+            return CreateResponse(result, messages, requestId, endpoint, durationMs, effectiveLogs);
         }
         
-        public static Dictionary<string, object> BuildErrorResponse(string error, List<string> errors = null)
+        public static Dictionary<string, object> BuildErrorResponse(string error, string requestId, string endpoint, long durationMs, List<string> logs = null)
         {
             var messages = new List<UnityMessage> { UnityMessage.TextMessage($"Error: {error}") };
-            AddUnityErrors(messages, errors ?? ErrorCollector.GetRecentErrors(maxCount: 5, errorsOnly: true));
-            return CreateResponse(messages);
+            var effectiveLogs = logs ?? ErrorCollector.GetRecentErrors(maxCount: 5, errorsOnly: true);
+            AddUnityErrors(messages, effectiveLogs);
+            return CreateResponse(OperationResult.Fail(error), messages, requestId, endpoint, durationMs, effectiveLogs);
         }
         
-        public static Dictionary<string, object> BuildCompilationErrorResponse()
+        public static Dictionary<string, object> BuildCompilationErrorResponse(string requestId, string endpoint, long durationMs)
         {
             var status = ErrorCollector.GetCompilationStatus();
             var messages = new List<UnityMessage>
@@ -128,13 +86,27 @@ namespace UnityBridge
                 UnityMessage.TextMessage($"Compilation Error: {status}")
             };
 
-            AddUnityErrors(messages, ErrorCollector.GetRecentErrors(maxCount: 5, errorsOnly: true));
-            return CreateResponse(messages);
+            var logs = ErrorCollector.GetRecentErrors(maxCount: 5, errorsOnly: true);
+            AddUnityErrors(messages, logs);
+            return CreateResponse(OperationResult.Fail(status), messages, requestId, endpoint, durationMs, logs);
         }
         
-        private static Dictionary<string, object> CreateResponse(List<UnityMessage> messages) =>
+        private static Dictionary<string, object> CreateResponse(OperationResult result, List<UnityMessage> messages, string requestId, string endpoint, long durationMs, List<string> logs) =>
             new Dictionary<string, object>
             {
+                { "success", result.Success },
+                { "error", result.Success ? null : result.Error },
+                { "errorCode", result.Success ? null : result.ErrorCode },
+                { "data", SerializeData(result.Data) },
+                { "logs", logs ?? new List<string>() },
+                { "meta", new Dictionary<string, object>
+                    {
+                        { "requestId", requestId },
+                        { "endpoint", endpoint },
+                        { "durationMs", durationMs },
+                        { "timestampUtc", DateTime.UtcNow.ToString("O") }
+                    }
+                },
                 { "messages", messages.Select(m => m.ToDictionary()).ToList() }
             };
         
@@ -159,8 +131,18 @@ namespace UnityBridge
             if (data is string s) return s;
             if (data is int || data is float || data is bool) return data.ToString();
             
-            // Для сложных объектов используем JsonUtils
             return JsonUtils.ToJson(data);
+        }
+
+        private static object SerializeData(object data)
+        {
+            if (data == null)
+                return null;
+            if (data is ImagePayload img)
+                return img.Base64;
+            if (data is string text)
+                return text;
+            return data;
         }
     }
 } 

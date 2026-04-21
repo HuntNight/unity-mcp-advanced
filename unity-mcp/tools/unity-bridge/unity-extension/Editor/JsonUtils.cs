@@ -5,8 +5,7 @@ using System.Linq;
 namespace UnityBridge
 {
     /// <summary>
-    /// Простые функциональные утилиты для работы с JSON
-    /// Функциональный подход - только чистые функции без состояния
+    /// Small JSON helpers used by the Unity bridge.
     /// </summary>
     public static class JsonUtils
     {

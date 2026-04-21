@@ -5,14 +5,10 @@ using UnityEngine;
 
 namespace UnityBridge
 {
-    /// <summary>
-    /// Простой функциональный сборщик ошибок Unity
-    /// Заменяет сложный ErrorBuffer - следует принципу простоты
-    /// </summary>
     public static class ErrorCollector
     {
-        private static readonly List<string> errors = new List<string>();
-        private static readonly int maxErrors = 50;
+        private static readonly List<string> entries = new List<string>();
+        private static readonly int maxEntries = 200;
         
         static ErrorCollector()
         {
@@ -28,36 +24,50 @@ namespace UnityBridge
         public static void AddInfo(string message) => 
             AddToCollection($"[Info] {message}");
         
+        public static int GetCursor()
+        {
+            lock (entries)
+                return entries.Count;
+        }
+
+        public static List<string> GetEntriesSince(int cursor, bool errorsOnly = false)
+        {
+            lock (entries)
+            {
+                IEnumerable<string> query = entries.Skip(Math.Max(0, cursor));
+                if (errorsOnly)
+                    query = query.Where(IsErrorEntry);
+                return query.ToList();
+            }
+        }
+
         public static List<string> GetAndClearErrors()
         {
-            lock (errors)
+            lock (entries)
             {
-                var result = errors.ToList();
-                errors.Clear();
+                var result = entries.ToList();
+                entries.Clear();
                 return result;
             }
         }
 
         public static List<string> GetRecentErrors(int maxCount = 5, bool errorsOnly = true)
         {
-            lock (errors)
+            lock (entries)
             {
-                var filtered = errors.AsEnumerable();
-
-                // Фильтровать только Error/Exception, игнорировать Warning
+                var filtered = entries.AsEnumerable();
                 if (errorsOnly)
-                    filtered = filtered.Where(e => e.Contains("[Unity Error]"));
+                    filtered = filtered.Where(IsErrorEntry);
 
-                var result = filtered
-                    .TakeLast(maxCount)  // Только последние N
-                    .ToList();
-
-                errors.Clear();
-                return result;
+                return filtered.TakeLast(maxCount).ToList();
             }
         }
 
-        public static bool HasErrors() => errors.Count > 0;
+        public static bool HasErrors()
+        {
+            lock (entries)
+                return entries.Count > 0;
+        }
         
         public static bool HasCompilationErrors()
         {
@@ -67,7 +77,6 @@ namespace UnityBridge
             }
             catch
             {
-                // Если вызов не из главного потока, считаем что ошибок нет
                 return false;
             }
         }
@@ -84,7 +93,6 @@ namespace UnityBridge
             }
             catch
             {
-                // Если вызов не из главного потока, пропускаем проверку
                 return null;
             }
         }
@@ -99,22 +107,26 @@ namespace UnityBridge
                         AddToCollection($"[Unity Error] {logString}");
                     break;
                 case LogType.Warning:
-                    // ПОЛНОСТЬЮ игнорируем warnings
+                    if (!ShouldIgnoreWarning(logString))
+                        AddToCollection($"[Unity Warning] {logString}");
                     break;
             }
         }
         
         private static void AddToCollection(string message)
         {
-            lock (errors)
+            lock (entries)
             {
-                errors.Add($"{DateTime.Now:HH:mm:ss} {message}");
+                entries.Add($"{DateTime.Now:HH:mm:ss} {message}");
                 
-                // Ограничиваем размер коллекции
-                while (errors.Count > maxErrors)
-                    errors.RemoveAt(0);
+                while (entries.Count > maxEntries)
+                    entries.RemoveAt(0);
             }
         }
+
+        private static bool IsErrorEntry(string entry) =>
+            entry.Contains("[Unity Error]") ||
+            entry.Contains("[Error]");
         
         private static bool ShouldIgnoreError(string message) =>
             message.Contains("ErrorCollector") || 

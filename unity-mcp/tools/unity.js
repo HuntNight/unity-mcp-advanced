@@ -1,13 +1,3 @@
-/**
- * Unity Bridge MCP Module - Transparent Bridge
- * 
- * Simplified architecture:
- * • Unity returns a ready-to-use array of messages
- * • JS simply forwards data without processing
- * • Maximum transparency
- */
-
-import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,448 +5,587 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..', '..');
 const SCREENSHOT_PATH = path.join(ROOT_DIR, 'unity-mcp-screenshot.png');
+const DEFAULT_PORT = Number(process.env.UNITY_MCP_PORT || 7777);
+const DEFAULT_BASE_URL = process.env.UNITY_MCP_BASE_URL || `http://localhost:${DEFAULT_PORT}`;
+const DEFAULT_SCOPE = 'active_scene';
+const RUNTIME_FRIENDLY_SCOPE = 'all_loaded_objects';
+const SCENE_SCOPE_SCHEMA = {
+  type: 'string',
+  enum: ['active_scene', 'all_loaded_scenes', 'dont_destroy_on_load', 'all_loaded_objects'],
+  default: DEFAULT_SCOPE,
+  description: 'Search scope for scene tools.'
+};
 
-const UNITY_BASE_URL = 'http://localhost:7777';
-
-/**
- * Конвертер Unity messages в MCP формат
- */
-function convertToMCPResponse(unityResponse) {
-  const normalize = (resp) => {
-    let data = resp;
-    // Если пришла строка — пробуем распарсить JSON
-    if (typeof data === 'string') {
-      try { data = JSON.parse(data); } catch { /* ignore */ }
-    }
-    // Если верхний уровень — массив сообщений
-    if (Array.isArray(data)) {
-      return { messages: data };
-    }
-    // Если messages — строка с JSON
-    if (data && typeof data.messages === 'string') {
-      try {
-        const parsed = JSON.parse(data.messages);
-        if (Array.isArray(parsed)) data.messages = parsed;
-      } catch { /* ignore */ }
-    }
-    // Если messages — объект-словарь, превращаем в массив
-    if (data && data.messages && !Array.isArray(data.messages) && typeof data.messages === 'object') {
-      data.messages = Object.values(data.messages);
-    }
-    return data;
-  };
-
-  const unityData = normalize(unityResponse);
-
-  // Новая Unity архитектура возвращает { messages: [...] }
-  if (unityData && Array.isArray(unityData.messages)) {
-    const content = [];
-    for (const msg of unityData.messages) {
-      if (msg && msg.type === 'text') {
-        content.push({ type: 'text', text: String(msg.content ?? '') });
-      } else if (msg && msg.type === 'image') {
-        if (msg.text) {
-          content.push({ type: 'text', text: String(msg.text) });
-        }
-        content.push({ type: 'image', data: String(msg.content ?? ''), mimeType: 'image/png' });
-      }
-    }
-    if (content.length > 0) return { content };
+function stringifyValue(value) {
+  if (value == null) {
+    return '';
   }
 
-  // Fallback для старого формата Unity API
-  return convertLegacyResponse(unityData ?? unityResponse);
-}
-
-/**
- * Fallback для старого формата Unity (временно)
- */
-function convertLegacyResponse(unityData) {
-  const content = [];
-
-  // Основное сообщение
-  if (unityData && unityData.message) {
-    content.push({ type: 'text', text: String(unityData.message) });
+  if (typeof value === 'string') {
+    return value;
   }
 
-  // Данные результата
-  if (unityData && unityData.data && unityData.data !== unityData.message) {
-    content.push({ type: 'text', text: typeof unityData.data === 'string' ? unityData.data : JSON.stringify(unityData.data) });
-  }
-
-  // Изображение для скриншотов
-  if (unityData && unityData.image) {
-    content.push({ type: 'text', text: 'Unity Screenshot' });
-    content.push({ type: 'image', data: String(unityData.image), mimeType: 'image/png' });
-  }
-
-  // Ошибки Unity
-  if (unityData && unityData.errors && unityData.errors.length > 0) {
-    const errorText = unityData.errors.map(err => {
-      if (typeof err === 'object') {
-        const level = err.Level || err.level || 'Info';
-        const message = err.Message || err.message || 'Unknown error';
-        return `${level}: ${message}`;
-      }
-      return err?.toString?.() ?? String(err);
-    }).join('\n');
-    content.push({ type: 'text', text: `Unity Logs:\n${errorText}` });
-  }
-
-  // Если нет контента — показываем сырой ответ, чтобы не терять данные
-  if (content.length === 0) {
-    try {
-      content.push({ type: 'text', text: `Raw Unity response: ${JSON.stringify(unityData)}` });
-    } catch {
-      content.push({ type: 'text', text: `Raw Unity response (non-serializable)` });
-    }
-  }
-
-  return { content };
-}
-
-/**
- * Универсальный обработчик Unity запросов
- */
-async function handleUnityRequest(endpoint, data = {}, timeout = 10000) {
   try {
-    // 🚀 Убеждаемся что данные корректно сериализуются в UTF-8
-    const jsonData = JSON.stringify(data);
-
-    const response = await axios.post(`${UNITY_BASE_URL}${endpoint}`, jsonData, {
-      timeout,
-      responseType: 'json',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Accept': 'application/json; charset=utf-8'
-      }
-    });
-
-    return convertToMCPResponse(response.data);
-  } catch (error) {
-    const errorContent = [{
-      type: 'text',
-      text: `Unity Connection Error: ${error.message}\n\nПроверьте:\n• Unity запущен\n• Unity Bridge Window открыт\n• HTTP сервер работает на порту 7777`
-    }];
-
-    // Добавляем детали ошибки если есть
-    if (error.response?.data) {
-      try {
-        const unityError = convertToMCPResponse(error.response.data);
-        errorContent.push(...unityError.content);
-      } catch {
-        errorContent.push({
-          type: 'text',
-          text: `Unity Error Details: ${JSON.stringify(error.response.data)}`
-        });
-      }
-    }
-
-    return { content: errorContent };
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
   }
 }
 
-/**
- * Сохранение изображения из MCP content в общий файл и возврат пути
- */
-async function saveScreenshotIfPresent(mcpResponse) {
-  if (!mcpResponse || !Array.isArray(mcpResponse.content)) return mcpResponse;
-  const img = mcpResponse.content.find((c) => c?.type === 'image' && typeof c.data === 'string');
-  if (!img) return mcpResponse;
+function normalizeUnityPayload(payload) {
+  if (typeof payload === 'string') {
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return { success: true, messages: [{ type: 'text', content: payload }] };
+    }
+  }
+
+  if (Array.isArray(payload)) {
+    return { success: true, messages: payload };
+  }
+
+  return payload || {};
+}
+
+function normalizeUnityMessages(payload) {
+  const normalized = normalizeUnityPayload(payload);
+  const content = [];
+  const messages = Array.isArray(normalized.messages) ? normalized.messages : [];
+
+  for (const message of messages) {
+    if (!message || !message.type) {
+      continue;
+    }
+
+    if (message.type === 'image') {
+      if (message.text) {
+        content.push({ type: 'text', text: String(message.text) });
+      }
+
+      content.push({
+        type: 'image',
+        data: String(message.content ?? ''),
+        mimeType: message.mimeType || 'image/png'
+      });
+      continue;
+    }
+
+    content.push({
+      type: 'text',
+      text: String(message.content ?? '')
+    });
+  }
+
+  if (content.length === 0) {
+    if (normalized.data != null) {
+      content.push({ type: 'text', text: stringifyValue(normalized.data) });
+    } else if (normalized.error) {
+      content.push({ type: 'text', text: String(normalized.error) });
+    } else {
+      content.push({ type: 'text', text: stringifyValue(normalized) });
+    }
+  }
+
+  if (normalized.errorCode) {
+    content.push({ type: 'text', text: `errorCode: ${normalized.errorCode}` });
+  }
+
+  if (Array.isArray(normalized.logs) && normalized.logs.length > 0) {
+    content.push({ type: 'text', text: `Unity logs:\n${normalized.logs.join('\n')}` });
+  }
+
+  if (normalized.meta?.requestId || normalized.meta?.durationMs != null) {
+    const metaParts = [];
+    if (normalized.meta.requestId) {
+      metaParts.push(`requestId=${normalized.meta.requestId}`);
+    }
+    if (normalized.meta.durationMs != null) {
+      metaParts.push(`durationMs=${normalized.meta.durationMs}`);
+    }
+    if (metaParts.length > 0) {
+      content.push({ type: 'text', text: `meta: ${metaParts.join(', ')}` });
+    }
+  }
+
+  return {
+    content,
+    isError: normalized.success === false
+  };
+}
+
+function getBaseUrlCandidates() {
+  const candidates = [DEFAULT_BASE_URL];
+
+  try {
+    const parsed = new URL(DEFAULT_BASE_URL);
+    const alternateHost = parsed.hostname === 'localhost'
+      ? '127.0.0.1'
+      : parsed.hostname === '127.0.0.1'
+        ? 'localhost'
+        : null;
+
+    if (alternateHost) {
+      const alternate = new URL(DEFAULT_BASE_URL);
+      alternate.hostname = alternateHost;
+      candidates.push(alternate.toString().replace(/\/$/, ''));
+    }
+  } catch {
+  }
+
+  return [...new Set(candidates)];
+}
+
+async function callUnity(endpoint, body = {}, { timeout = 10000, method = 'POST' } = {}) {
+  const baseUrls = getBaseUrlCandidates();
+  let lastError = null;
+
+  for (const baseUrl of baseUrls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const response = await fetch(`${baseUrl}${endpoint}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          Accept: 'application/json'
+        },
+        body: method === 'GET' ? undefined : JSON.stringify(body),
+        signal: controller.signal
+      });
+
+      const text = await response.text();
+      let payload = {};
+
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        payload = { success: response.ok, messages: [{ type: 'text', content: text }] };
+      }
+
+      const normalized = normalizeUnityMessages(payload);
+      if (!response.ok && !normalized.isError) {
+        normalized.isError = true;
+      }
+      return normalized;
+    } catch (error) {
+      lastError = `${error.message}\nBase URL: ${baseUrl}`;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text',
+        text: `Unity connection failed: ${lastError ?? 'unknown error'}`
+      }
+    ]
+  };
+}
+
+async function saveScreenshotIfPresent(response) {
+  const image = response?.content?.find((item) => item?.type === 'image' && typeof item.data === 'string');
+  if (!image) {
+    return response;
+  }
 
   try {
     await fs.rm(SCREENSHOT_PATH, { force: true });
-    const buffer = Buffer.from(img.data, 'base64');
-    await fs.writeFile(SCREENSHOT_PATH, buffer);
-    mcpResponse.content.unshift({ type: 'text', text: `Saved screenshot: ${SCREENSHOT_PATH}` });
-  } catch (err) {
-    mcpResponse.content.unshift({ type: 'text', text: `Failed to save screenshot: ${err.message}` });
+    await fs.writeFile(SCREENSHOT_PATH, Buffer.from(image.data, 'base64'));
+    response.content.unshift({ type: 'text', text: `Saved screenshot: ${SCREENSHOT_PATH}` });
+  } catch (error) {
+    response.content.unshift({ type: 'text', text: `Failed to save screenshot: ${error.message}` });
   }
-  return mcpResponse;
+
+  return response;
 }
 
-// Unity инструменты
+function withScope(params = {}, fallbackScope = DEFAULT_SCOPE) {
+  return {
+    scope: typeof params.scope === 'string' ? params.scope : fallbackScope
+  };
+}
+
 const unityTools = [
   {
-    name: "screenshot",
-    description: 'Captures a high-resolution screenshot from the Unity Editor\'s Game View or Scene View. The image is returned as base64 encoded data. This tool is useful for verifying visual changes, UI layouts, or rendering artifacts.',
+    name: 'health',
+    description: 'Checks whether the Unity Bridge server is reachable and returns bridge diagnostics.',
     inputSchema: {
       type: 'object',
-      properties: {
-        width: {
-          type: 'number',
-          minimum: 256,
-          maximum: 4096,
-          description: 'The width of the screenshot in pixels. Range: 256-4096.'
-        },
-        height: {
-          type: 'number',
-          minimum: 256,
-          maximum: 4096,
-          description: 'The height of the screenshot in pixels. Range: 256-4096.'
-        },
-        view_type: {
-          type: 'string',
-          enum: ['game', 'scene'],
-          default: 'game',
-          description: 'Specifies the source view for the screenshot: \'game\' for the Game View (default) or \'scene\' for the Scene View.'
-        },
-      },
+      properties: {}
     },
-    required: [],
-    handler: async (params) => {
-      const requestBody = {};
-      if (typeof params?.width === 'number') requestBody.width = params.width;
-      if (typeof params?.height === 'number') requestBody.height = params.height;
-      if (typeof params?.view_type === 'string') requestBody.view_type = params.view_type;
-      const resp = await handleUnityRequest('/api/screenshot', requestBody);
-      return await saveScreenshotIfPresent(resp);
-    }
+    handler: async () => callUnity('/api/health', {}, { timeout: 5000 })
   },
-
   {
-    name: "camera_screenshot",
-    description: 'Renders a screenshot from a specific virtual camera position in the scene, defined by world coordinates and a target focus point. Allows for validating scene composition from exact angles without moving the main scene camera.',
+    name: 'screenshot',
+    description: 'Captures a screenshot from the Unity Game View or Scene View.',
     inputSchema: {
       type: 'object',
       properties: {
-        position: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 3,
-          maxItems: 3,
-          description: 'The world space coordinates [x, y, z] of the camera.'
-        },
-        target: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 3,
-          maxItems: 3,
-          description: 'The world space coordinates [x, y, z] the camera should face.'
-        },
-        width: {
-          type: 'number',
-          default: 1920,
-          minimum: 256,
-          maximum: 4096,
-          description: 'The pixel width of the generated screenshot.'
-        },
-        height: {
-          type: 'number',
-          default: 1080,
-          minimum: 256,
-          maximum: 4096,
-          description: 'The pixel height of the generated screenshot.'
-        },
-        fov: {
-          type: 'number',
-          default: 60,
-          minimum: 10,
-          maximum: 179,
-          description: 'The field of view in degrees.'
-        },
-      },
+        width: { type: 'number', minimum: 256, maximum: 4096, description: 'Screenshot width in pixels.' },
+        height: { type: 'number', minimum: 256, maximum: 4096, description: 'Screenshot height in pixels.' },
+        view_type: { type: 'string', enum: ['game', 'scene'], default: 'game', description: 'Source view.' }
+      }
     },
-    required: ['position', 'target'],
-    handler: async (params) => {
-      const requestBody = {
-        position: params.position,
-        target: params.target,
-        fov: params.fov || 60,
-        width: params.width || 1920,
-        height: params.height || 1080
-      };
-
-      const resp = await handleUnityRequest('/api/camera_screenshot', requestBody, 20000);
-      return await saveScreenshotIfPresent(resp);
-    }
+    handler: async (params) => saveScreenshotIfPresent(await callUnity('/api/screenshot', {
+      width: params.width,
+      height: params.height,
+      view_type: params.view_type
+    }, { timeout: 20000 }))
   },
-
   {
-    name: "scene_hierarchy",
-    description: 'Retrieves the hierarchy of GameObjects in the active Unity scene. Supports filtering by name (Exact, Glob, Regex), tag, and hierarchy depth. Returns a structured list of objects including names, InstanceIDs, and attached components. Useful for mapping the scene structure or locating specific objects.',
+    name: 'camera_screenshot',
+    description: 'Renders a screenshot from an existing Unity camera or from a temporary virtual camera.',
     inputSchema: {
       type: 'object',
       properties: {
-        name_glob: { type: 'string', description: 'Filter objects by name using glob patterns (e.g., \'Player*\').' },
-        name_regex: { type: 'string', description: 'Filter objects by name using C# regular expressions.' },
-        tag_glob: { type: 'string', description: 'Filter objects by tag using glob patterns.' },
-        path: { type: 'string', description: 'Limits the search to a specific subtree path (e.g., \'World/Level1\').' },
-        max_results: {
-          type: 'number',
-          default: 0,
-          description: 'Maximum number of results to return (0 for unlimited).'
-        },
-        max_depth: {
-          type: 'number',
-          default: -1,
-          description: 'Maximum traversal depth in the hierarchy (-1 for unlimited).'
-        },
-        allow_large_response: {
-          type: 'boolean',
-          default: false,
-          description: 'If true, bypasses the standard response size limit (use with caution needed for large hierarchies).'
-        },
-        summary: {
-          type: 'boolean',
-          default: false,
-          description: 'If true, returns only statistical data (count of scanned/matched objects) without the full object list.'
-        }
-      },
+        scope: SCENE_SCOPE_SCHEMA,
+        name: { type: 'string', description: 'Exact object name when capturing from an existing camera.' },
+        path: { type: 'string', description: 'Exact object path when capturing from an existing camera.' },
+        instance_id: { type: 'number', description: 'Unity instance id when capturing from an existing camera.' },
+        position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Camera world position.' },
+        target: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Camera target world position.' },
+        width: { type: 'number', default: 1920, minimum: 256, maximum: 4096, description: 'Screenshot width in pixels.' },
+        height: { type: 'number', default: 1080, minimum: 256, maximum: 4096, description: 'Screenshot height in pixels.' },
+        fov: { type: 'number', default: 60, minimum: 10, maximum: 179, description: 'Camera field of view for virtual camera capture.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects when resolving an existing camera.' }
+      }
     },
-    required: [],
-    handler: async (params) => {
-      const requestBody = {
-        name_glob: params.name_glob,
-        name_regex: params.name_regex,
-        tag_glob: params.tag_glob,
-        path: params.path,
-        max_results: typeof params.max_results === 'number' ? params.max_results : undefined,
-        max_depth: typeof params.max_depth === 'number' ? params.max_depth : undefined,
-        allow_large_response: !!params.allow_large_response,
-        summary: !!params.summary
-      };
-
-      return await handleUnityRequest('/api/scene_hierarchy', requestBody, 15000);
-    }
+    handler: async (params) => saveScreenshotIfPresent(await callUnity('/api/camera_screenshot', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name: params.name,
+      path: params.path,
+      instance_id: params.instance_id,
+      position: params.position,
+      target: params.target,
+      width: params.width,
+      height: params.height,
+      fov: params.fov,
+      include_inactive: params.include_inactive
+    }, { timeout: 20000 }))
   },
-
   {
-    name: "execute",
-    description: 'Executes arbitrary C# code within the running Unity Editor environment. Supports local functions, LINQ, and Unity API calls. This tool allows for dynamic scripting, object manipulation, and state verification. Note: Code is wrapped in a method body; class/struct definitions are not supported directly.',
+    name: 'list_scenes',
+    description: 'Lists all loaded Unity scenes, including DontDestroyOnLoad when present.',
     inputSchema: {
       type: 'object',
-      properties: {
-        code: {
-          type: 'string',
-          description: 'The C# code snippet to execute.'
-        },
-        safe_mode: {
-          type: 'boolean',
-          default: true,
-          description: 'Enables basic static analysis to prevent obviously destructive operations (default: true).'
-        },
-        validate_only: {
-          type: 'boolean',
-          default: false,
-          description: 'If true, compiles the code to check for syntax errors without executing it.'
-        },
-        allow_large_response: {
-          type: 'boolean',
-          default: false,
-          description: 'If true, allows the return of large string payloads exceeding standard limits.'
-        },
-      },
+      properties: {}
     },
-    required: ['code'],
-    handler: async (params) => {
-      const requestBody = {
-        code: params.code,
-        safe_mode: params.safe_mode !== false,
-        validate_only: !!params.validate_only,
-        allow_large_response: !!params.allow_large_response
-      };
-
-      return await handleUnityRequest('/api/execute', requestBody, 30000);
-    }
+    handler: async () => callUnity('/api/list_scenes')
   },
-
   {
-    name: "scene_grep",
-    description: 'Performs advanced querying of the Unity scene using a SQL-like DSL. Supports filtering objects (WHERE clause) based on properties, components, names, and tags, and selecting specific data fields (SELECT clause). Ideal for complex scene introspection and validation.',
+    name: 'find_objects',
+    description: 'Finds scene objects across the selected scope by name, tag, path, component, or instance id.',
     inputSchema: {
       type: 'object',
       properties: {
-        name_glob: { type: 'string', description: 'Filter by object name using glob patterns.' },
-        name_regex: { type: 'string', description: 'Filter by object name using regular expressions.' },
-        tag_glob: { type: 'string', description: 'Filter by object tag.' },
-        where: { type: 'string', description: 'The filtering condition using DSL (e.g., \'active == true and Light.intensity > 0\'). Supports comparison operators, logical operators, and property access.' },
-        select: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'List of fields or properties to retrieve for matching objects (e.g., [\'GameObject.name\', \'Transform.position\']).'
-        },
-        max_results: { type: 'number', default: 100, description: 'Limit the number of returned matches.' },
-        path: { type: 'string', description: 'Restrict search to a specific hierarchy path.' },
-        max_depth: { type: 'number', default: -1, description: 'Maximum depth for recursive search.' },
-        allow_large_response: {
-          type: 'boolean',
-          default: false,
-          description: 'Permit large response payloads.'
-        }
-      },
+        scope: SCENE_SCOPE_SCHEMA,
+        name_glob: { type: 'string', description: 'Glob filter for object names.' },
+        name_regex: { type: 'string', description: 'Regex filter for object names.' },
+        tag_glob: { type: 'string', description: 'Glob filter for tags.' },
+        path: { type: 'string', description: 'Path filter for hierarchy traversal.' },
+        component: { type: 'string', description: 'Matches objects that contain a component name.' },
+        instance_id: { type: 'number', description: 'Exact Unity instance id.' },
+        max_results: { type: 'number', default: 100, description: 'Maximum number of results.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects.' }
+      }
     },
-    required: [],
-    handler: async (params) => {
-      const requestBody = {
-        name_glob: params.name_glob,
-        name_regex: params.name_regex,
-        tag_glob: params.tag_glob,
-        where: typeof params.where === 'string' ? params.where : undefined,
-        select: Array.isArray(params.select) ? params.select : undefined,
-        max_results: typeof params.max_results === 'number' ? params.max_results : 100,
-        allow_large_response: !!params.allow_large_response,
-        path: params.path,
-        max_depth: typeof params.max_depth === 'number' ? params.max_depth : undefined
-      };
-      return await handleUnityRequest('/api/scene_grep', requestBody, 20000);
-    }
+    handler: async (params) => callUnity('/api/find_objects', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name_glob: params.name_glob,
+      name_regex: params.name_regex,
+      tag_glob: params.tag_glob,
+      path: params.path,
+      component: params.component,
+      instance_id: params.instance_id,
+      max_results: params.max_results,
+      include_inactive: params.include_inactive
+    })
   },
-
   {
-    name: "play_mode",
-    description: 'Controls the Play Mode state of the Unity Editor. Can be used to start or stop the game simulation programmatically.',
+    name: 'inspect_object',
+    description: 'Returns detailed information about a single Unity object by name, path, or instance id.',
     inputSchema: {
       type: 'object',
       properties: {
-        enabled: {
-          type: 'boolean',
-          description: 'Set to true to enter Play Mode, or false to exit Play Mode.'
-        }
-      },
+        scope: SCENE_SCOPE_SCHEMA,
+        name: { type: 'string', description: 'Exact object name.' },
+        path: { type: 'string', description: 'Exact object path.' },
+        instance_id: { type: 'number', description: 'Unity instance id.' },
+        include_children: { type: 'boolean', default: true, description: 'Include child objects in the response.' },
+        include_component_values: { type: 'boolean', default: false, description: 'Include curated component values for common component types.' }
+      }
     },
-    required: ['enabled'],
-    handler: async (params) => {
-      return await handleUnityRequest('/api/play_mode', { enabled: params.enabled });
-    }
+    handler: async (params) => callUnity('/api/inspect_object', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name: params.name,
+      path: params.path,
+      instance_id: params.instance_id,
+      include_children: params.include_children,
+      include_component_values: params.include_component_values
+    })
   },
-
   {
-    name: "scene_radius",
-    description: 'Performs a spatial search to find all Colliders within a specified spherical radius from a center point. Returns a list of objects physically present in that volume.',
+    name: 'set_transform',
+    description: 'Updates Transform values on a Unity object without using dynamic C# execution.',
     inputSchema: {
       type: 'object',
       properties: {
-        center: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 3,
-          maxItems: 3,
-          description: 'The center point [x, y, z] of the search sphere.'
-        },
-        radius: {
-          type: 'number',
-          description: 'The radius of the search sphere.'
-        }
-      },
+        scope: SCENE_SCOPE_SCHEMA,
+        name: { type: 'string', description: 'Exact object name.' },
+        path: { type: 'string', description: 'Exact object path.' },
+        instance_id: { type: 'number', description: 'Unity instance id.' },
+        position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'World position.' },
+        local_position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Local position.' },
+        rotation: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'World Euler rotation.' },
+        local_rotation: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Local Euler rotation.' },
+        local_scale: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Local scale.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects when resolving the target.' }
+      }
     },
-    required: ['center', 'radius'],
-    handler: async (params) => {
-      return await handleUnityRequest('/api/scene_radius', {
-        center_position: params.center,
-        radius: params.radius
-      });
-    }
+    handler: async (params) => callUnity('/api/set_transform', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name: params.name,
+      path: params.path,
+      instance_id: params.instance_id,
+      position: params.position,
+      local_position: params.local_position,
+      rotation: params.rotation,
+      local_rotation: params.local_rotation,
+      local_scale: params.local_scale,
+      include_inactive: params.include_inactive
+    })
+  },
+  {
+    name: 'set_light',
+    description: 'Updates Light component values on a Unity object without using dynamic C# execution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: SCENE_SCOPE_SCHEMA,
+        name: { type: 'string', description: 'Exact object name.' },
+        path: { type: 'string', description: 'Exact object path.' },
+        instance_id: { type: 'number', description: 'Unity instance id.' },
+        intensity: { type: 'number', description: 'Light intensity.' },
+        range: { type: 'number', description: 'Light range.' },
+        spot_angle: { type: 'number', description: 'Spot angle in degrees.' },
+        shadow_strength: { type: 'number', description: 'Shadow strength.' },
+        color: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 4, description: 'RGBA color in 0..1 range.' },
+        light_type: { type: 'string', description: 'Light type enum value.' },
+        shadows: { type: 'string', description: 'Light shadows enum value.' },
+        enabled: { type: 'boolean', description: 'Enable or disable the Light component.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects when resolving the target.' }
+      }
+    },
+    handler: async (params) => callUnity('/api/set_light', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name: params.name,
+      path: params.path,
+      instance_id: params.instance_id,
+      intensity: params.intensity,
+      range: params.range,
+      spot_angle: params.spot_angle,
+      shadow_strength: params.shadow_strength,
+      color: params.color,
+      light_type: params.light_type,
+      shadows: params.shadows,
+      enabled: params.enabled,
+      include_inactive: params.include_inactive
+    })
+  },
+  {
+    name: 'set_camera',
+    description: 'Updates Camera component values on a Unity object without using dynamic C# execution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: SCENE_SCOPE_SCHEMA,
+        name: { type: 'string', description: 'Exact object name.' },
+        path: { type: 'string', description: 'Exact object path.' },
+        instance_id: { type: 'number', description: 'Unity instance id.' },
+        field_of_view: { type: 'number', description: 'Camera field of view.' },
+        near_clip_plane: { type: 'number', description: 'Camera near clip plane.' },
+        far_clip_plane: { type: 'number', description: 'Camera far clip plane.' },
+        orthographic: { type: 'boolean', description: 'Use orthographic projection.' },
+        orthographic_size: { type: 'number', description: 'Orthographic size.' },
+        enabled: { type: 'boolean', description: 'Enable or disable the Camera component.' },
+        clear_flags: { type: 'string', description: 'Camera clear flags enum value.' },
+        background_color: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 4, description: 'RGBA background color in 0..1 range.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects when resolving the target.' }
+      }
+    },
+    handler: async (params) => callUnity('/api/set_camera', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name: params.name,
+      path: params.path,
+      instance_id: params.instance_id,
+      field_of_view: params.field_of_view,
+      near_clip_plane: params.near_clip_plane,
+      far_clip_plane: params.far_clip_plane,
+      orthographic: params.orthographic,
+      orthographic_size: params.orthographic_size,
+      enabled: params.enabled,
+      clear_flags: params.clear_flags,
+      background_color: params.background_color,
+      include_inactive: params.include_inactive
+    })
+  },
+  {
+    name: 'set_active',
+    description: 'Sets the active state of a Unity object without using dynamic C# execution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: SCENE_SCOPE_SCHEMA,
+        name: { type: 'string', description: 'Exact object name.' },
+        path: { type: 'string', description: 'Exact object path.' },
+        instance_id: { type: 'number', description: 'Unity instance id.' },
+        active: { type: 'boolean', description: 'Target activeSelf state.' }
+      },
+      required: ['active']
+    },
+    handler: async (params) => callUnity('/api/set_active', {
+      ...withScope(params, RUNTIME_FRIENDLY_SCOPE),
+      name: params.name,
+      path: params.path,
+      instance_id: params.instance_id,
+      active: params.active
+    })
+  },
+  {
+    name: 'scene_hierarchy',
+    description: 'Lists objects from the selected Unity scope with hierarchy filtering and summary mode.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: SCENE_SCOPE_SCHEMA,
+        name_glob: { type: 'string', description: 'Glob filter for object names.' },
+        name_regex: { type: 'string', description: 'Regex filter for object names.' },
+        tag_glob: { type: 'string', description: 'Glob filter for tags.' },
+        path: { type: 'string', description: 'Hierarchy path filter.' },
+        max_results: { type: 'number', default: 0, description: 'Maximum number of returned rows. 0 means unlimited.' },
+        max_depth: { type: 'number', default: -1, description: 'Maximum traversal depth. -1 means unlimited.' },
+        allow_large_response: { type: 'boolean', default: false, description: 'Allow larger payloads from Unity.' },
+        summary: { type: 'boolean', default: false, description: 'Return only scan statistics.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects.' }
+      }
+    },
+    handler: async (params) => callUnity('/api/scene_hierarchy', {
+      ...withScope(params),
+      name_glob: params.name_glob,
+      name_regex: params.name_regex,
+      tag_glob: params.tag_glob,
+      path: params.path,
+      max_results: params.max_results,
+      max_depth: params.max_depth,
+      allow_large_response: params.allow_large_response,
+      summary: params.summary,
+      include_inactive: params.include_inactive
+    }, { timeout: 20000 })
+  },
+  {
+    name: 'scene_grep',
+    description: 'Queries Unity objects with a DSL-based filter and explicit search scope.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: SCENE_SCOPE_SCHEMA,
+        name_glob: { type: 'string', description: 'Glob filter for object names.' },
+        name_regex: { type: 'string', description: 'Regex filter for object names.' },
+        tag_glob: { type: 'string', description: 'Glob filter for tags.' },
+        where: { type: 'string', description: 'DSL filter expression.' },
+        select: { type: 'array', items: { type: 'string' }, description: 'Fields to select.' },
+        max_results: { type: 'number', default: 100, description: 'Maximum number of rows.' },
+        path: { type: 'string', description: 'Hierarchy path filter.' },
+        max_depth: { type: 'number', default: -1, description: 'Maximum traversal depth.' },
+        allow_large_response: { type: 'boolean', default: false, description: 'Allow larger payloads from Unity.' },
+        include_inactive: { type: 'boolean', default: true, description: 'Include inactive objects.' }
+      }
+    },
+    handler: async (params) => callUnity('/api/scene_grep', {
+      ...withScope(params),
+      name_glob: params.name_glob,
+      name_regex: params.name_regex,
+      tag_glob: params.tag_glob,
+      where: params.where,
+      select: params.select,
+      max_results: params.max_results,
+      path: params.path,
+      max_depth: params.max_depth,
+      allow_large_response: params.allow_large_response,
+      include_inactive: params.include_inactive
+    }, { timeout: 20000 })
+  },
+  {
+    name: 'scene_radius',
+    description: 'Finds objects within a radius inside the selected Unity search scope.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: SCENE_SCOPE_SCHEMA,
+        center: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: 'Center position.' },
+        center_object: { type: 'string', description: 'Object name to use as the center.' },
+        radius: { type: 'number', description: 'Search radius.' },
+        max_results: { type: 'number', default: 100, description: 'Maximum number of rows.' },
+        include_inactive: { type: 'boolean', default: false, description: 'Include inactive objects.' },
+        name_glob: { type: 'string', description: 'Glob filter for object names.' },
+        name_regex: { type: 'string', description: 'Regex filter for object names.' },
+        tag_glob: { type: 'string', description: 'Glob filter for tags.' }
+      },
+      required: ['radius']
+    },
+    handler: async (params) => callUnity('/api/scene_radius', {
+      ...withScope(params),
+      center_position: params.center,
+      center_object: params.center_object,
+      radius: params.radius,
+      max_results: params.max_results,
+      include_inactive: params.include_inactive,
+      name_glob: params.name_glob,
+      name_regex: params.name_regex,
+      tag_glob: params.tag_glob
+    })
+  },
+  {
+    name: 'execute',
+    description: 'Compiles and optionally executes C# code inside the Unity Editor with explicit validation settings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'C# method body to compile and run.' },
+        safe_mode: { type: 'boolean', default: true, description: 'Reject unsafe APIs before compilation.' },
+        validate_only: { type: 'boolean', default: false, description: 'Only compile and validate the snippet.' },
+        allow_large_response: { type: 'boolean', default: false, description: 'Allow larger payloads from Unity.' }
+      },
+      required: ['code']
+    },
+    handler: async (params) => callUnity('/api/execute', {
+      code: params.code,
+      safe_mode: params.safe_mode !== false,
+      validate_only: !!params.validate_only,
+      allow_large_response: !!params.allow_large_response
+    }, { timeout: 45000 })
+  },
+  {
+    name: 'play_mode',
+    description: 'Enters or exits Unity Play Mode.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', description: 'True to enter Play Mode, false to exit it.' }
+      },
+      required: ['enabled']
+    },
+    handler: async (params) => callUnity('/api/play_mode', { enabled: params.enabled }, { timeout: 10000 })
   }
 ];
 
 export const unityModule = {
-  name: 'unity',
-  description: 'Unity Bridge: specific AI ↔ Unity3D interface. Execute C# code, capture screenshots, and analyze scene structure.',
-  tools: unityTools,
-
-  decorators: {
-    disableSystemInfo: true,
-    disableDebugLogs: true
-  }
-}; 
+  namespace: 'unity',
+  description: 'Unity Bridge tools for screenshots, scene inspection, object lookup, and code execution.',
+  tools: unityTools
+};

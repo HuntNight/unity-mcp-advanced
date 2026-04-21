@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Microsoft.CSharp;
 using UnityEngine;
 using UnityEditor;
 using System.CodeDom.Compiler;
@@ -20,9 +21,16 @@ namespace UnityBridge
                 var code = request.GetValue<string>("code");
                 if (string.IsNullOrEmpty(code))
                     return OperationResult.Fail("Code parameter is required");
+                var safeMode = request.GetValue("safe_mode", true);
                 var validateOnly = request.GetValue("validate_only", false);
                 
                 var unescapedCode = JsonUtils.Unescape(code);
+                if (safeMode)
+                {
+                    var safeModeError = ValidateUserCode(unescapedCode);
+                    if (!string.IsNullOrEmpty(safeModeError))
+                        return OperationResult.Fail(safeModeError);
+                }
                 var stmtError = ValidateStatementsOnly(unescapedCode);
                 if (!string.IsNullOrEmpty(stmtError))
                     return OperationResult.Fail(stmtError);
@@ -34,7 +42,7 @@ namespace UnityBridge
                 var result = ExecuteCodeDirect(unescapedCode, validateOnly);
 
                 if (!result.Success)
-                    return OperationResult.Fail($"Code execution failed: {result.ErrorMessage}");
+                    return OperationResult.Fail($"Code execution failed: {result.ErrorMessage}", result.ErrorCode);
 
                 var successMessage = validateOnly ? "Code compiled successfully" : "Code executed successfully";
                 if (!validateOnly && result.Value != null) successMessage += $"\nReturn Value: {result.Value}";
@@ -42,7 +50,7 @@ namespace UnityBridge
             }
             catch (Exception ex)
             {
-                return OperationResult.Fail($"Code execution error: {ex.Message}");
+                return OperationResult.Fail($"Code execution error: {ex.Message}", "EXECUTE_UNHANDLED");
             }
         }
 
@@ -92,52 +100,59 @@ namespace UnityBridge
                 var fullCode = GenerateFullCodeForExecution(code);
                 File.WriteAllText(sourcePath, fullCode, Encoding.UTF8);
 
-                var references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                
-                AddAssemblyIfNotExists(references, "mscorlib.dll");
-                AddAssemblyIfNotExists(references, "System.dll");
-                AddAssemblyIfNotExists(references, "System.Core.dll");
-                
-                AddAssemblyIfNotExists(references, typeof(UnityEngine.GameObject).Assembly.Location);
-                AddAssemblyIfNotExists(references, typeof(UnityEditor.EditorWindow).Assembly.Location);
-                
-                var allowedUnityAssemblies = new[] {
-                    "UnityEngine.CoreModule", "UnityEngine.IMGUIModule", "UnityEngine.PhysicsModule",
-                    "UnityEngine.AnimationModule", "UnityEngine.AudioModule", "UnityEngine.ParticleSystemModule",
-                    "UnityEngine.TerrainModule", "UnityEngine.UIModule", "UnityEngine.TextRenderingModule",
-                    "UnityEngine.UIElementsModule", "UnityEngine.ImageConversionModule", "UnityEditor.CoreModule"
-                };
-
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        if (asm.IsDynamic || string.IsNullOrEmpty(asm.Location)) continue;
-                        
-                        var name = asm.GetName().Name;
-                        if (allowedUnityAssemblies.Contains(name) || 
-                            name == "Assembly-CSharp" || 
-                            name == "Assembly-CSharp-Editor" ||
-                            name == "netstandard")
-                        {
-                            AddAssemblyIfNotExists(references, asm.Location);
-                        }
-                    }
-                    catch { /* ignore */ }
-                }
+                var references = CollectCompileReferences();
+                Assembly compiledAssembly = null;
 
                 var compilerPath = FindRoslynCompiler();
                 if (string.IsNullOrEmpty(compilerPath))
                 {
-                    return new CodeExecutionResult { Success = false, ErrorMessage = "Roslyn compiler (csc.exe) not found in Unity installation." };
-                }
+                    var fallbackResult = CompileWithCodeDom(fullCode, references);
+                    if (!fallbackResult.Success)
+                    {
+                        var cleanedFallbackError = CleanCompilerErrorPath(fallbackResult.ErrorMessage, fullCode);
+                        return new CodeExecutionResult
+                        {
+                            Success = false,
+                            ErrorCode = fallbackResult.ErrorCode ?? "EXECUTE_COMPILER_NOT_FOUND",
+                            ErrorMessage = cleanedFallbackError
+                        };
+                    }
 
-                var compileResult = CompileWithRoslyn(compilerPath, sourcePath, dllPath, references);
-                
-                if (!compileResult.Success)
+                    compiledAssembly = fallbackResult.CompiledAssembly;
+                }
+                else
                 {
-                    var cleanedError = CleanCompilerErrorPath(compileResult.ErrorMessage, fullCode);
-                    return new CodeExecutionResult { Success = false, ErrorMessage = cleanedError };
+                    var compileResult = CompileWithRoslyn(compilerPath, sourcePath, dllPath, references);
+                    if (!compileResult.Success)
+                    {
+                        if (!ShouldFallbackToCodeDom(compileResult.ErrorMessage))
+                        {
+                            var cleanedError = CleanCompilerErrorPath(compileResult.ErrorMessage, fullCode);
+                            return new CodeExecutionResult { Success = false, ErrorCode = "EXECUTE_COMPILE_ERROR", ErrorMessage = cleanedError };
+                        }
+
+                        var fallbackResult = CompileWithCodeDom(fullCode, references);
+                        if (!fallbackResult.Success)
+                        {
+                            var combinedError = "Roslyn compiler failed and CodeDOM fallback also failed.\n\nRoslyn:\n" +
+                                compileResult.ErrorMessage + "\n\nCodeDOM:\n" + fallbackResult.ErrorMessage;
+                            var cleanedCombinedError = CleanCompilerErrorPath(combinedError, fullCode);
+                            return new CodeExecutionResult
+                            {
+                                Success = false,
+                                ErrorCode = fallbackResult.ErrorCode ?? "EXECUTE_COMPILE_ERROR",
+                                ErrorMessage = cleanedCombinedError
+                            };
+                        }
+
+                        compiledAssembly = fallbackResult.CompiledAssembly;
+                    }
+                    else if (!validateOnly)
+                    {
+                        byte[] assemblyBytes = File.ReadAllBytes(dllPath);
+                        EnsureRuntimeSupportAssembliesLoaded();
+                        compiledAssembly = Assembly.Load(assemblyBytes);
+                    }
                 }
 
                 if (validateOnly)
@@ -145,26 +160,64 @@ namespace UnityBridge
                     return new CodeExecutionResult { Success = true, Value = "Compilation OK" };
                 }
 
-                // Load assembly from bytes to avoid file locking and force fresh load
-                byte[] assemblyBytes = File.ReadAllBytes(dllPath);
-                
-                // Try to cleanup immediately
-                try { File.Delete(dllPath); } catch { /* ignore */ }
+                try { File.Delete(dllPath); } catch { }
 
-                var assembly = Assembly.Load(assemblyBytes);
-                var type = assembly.GetType("DynamicCodeExecutor");
+                if (compiledAssembly == null)
+                {
+                    return new CodeExecutionResult
+                    {
+                        Success = false,
+                        ErrorCode = "EXECUTE_RUNTIME_FAILURE",
+                        ErrorMessage = "Compilation finished without a loadable assembly."
+                    };
+                }
+
+                var type = compiledAssembly.GetType("DynamicCodeExecutor");
+                if (type == null)
+                {
+                    return new CodeExecutionResult
+                    {
+                        Success = false,
+                        ErrorCode = "EXECUTE_REFLECTION_FAILURE",
+                        ErrorMessage = "Compiled assembly does not contain DynamicCodeExecutor."
+                    };
+                }
                 var method = type.GetMethod("Execute", BindingFlags.Static | BindingFlags.Public);
+                if (method == null)
+                {
+                    return new CodeExecutionResult
+                    {
+                        Success = false,
+                        ErrorCode = "EXECUTE_REFLECTION_FAILURE",
+                        ErrorMessage = "Compiled assembly does not contain DynamicCodeExecutor.Execute()."
+                    };
+                }
                 var result = method.Invoke(null, null);
 
                 return new CodeExecutionResult { Success = true, Value = result?.ToString() ?? "null" };
+            }
+            catch (FileNotFoundException ex) when (!string.IsNullOrEmpty(ex.FileName))
+            {
+                var missingAssembly = new AssemblyName(ex.FileName).Name;
+                return new CodeExecutionResult
+                {
+                    Success = false,
+                    ErrorCode = "EXECUTE_MISSING_ASSEMBLY",
+                    ErrorMessage = $"Missing runtime assembly: {missingAssembly}. The bridge could not load a dependency required for dynamic execution."
+                };
             }
             catch (Exception ex)
             {
                 var actualEx = ex is System.Reflection.TargetInvocationException tie ? tie.InnerException ?? ex : ex;
                 var stackTrace = actualEx.StackTrace ?? "";
                 var userCodePreview = GetCodePreview(code, actualEx);
-                var errorMsg = $"{actualEx.GetType().Name}: {actualEx.Message}\n\nКод:\n{userCodePreview}\n\nСтек вызовов:\n{stackTrace}";
-                return new CodeExecutionResult { Success = false, ErrorMessage = errorMsg };
+                var errorMsg = $"{actualEx.GetType().Name}: {actualEx.Message}\n\nCode:\n{userCodePreview}\n\nStack trace:\n{stackTrace}";
+                return new CodeExecutionResult
+                {
+                    Success = false,
+                    ErrorCode = actualEx is TargetInvocationException ? "EXECUTE_TARGET_INVOCATION" : "EXECUTE_RUNTIME_FAILURE",
+                    ErrorMessage = errorMsg
+                };
             }
             finally
             {
@@ -258,6 +311,76 @@ namespace UnityBridge
             }
         }
 
+        private static CompileAssemblyResult CompileWithCodeDom(string sourceCode, HashSet<string> references)
+        {
+            try
+            {
+                using (var provider = new CSharpCodeProvider(new Dictionary<string, string>
+                {
+                    { "CompilerVersion", "v4.0" }
+                }))
+                {
+                    var parameters = new CompilerParameters
+                    {
+                        GenerateExecutable = false,
+                        GenerateInMemory = true,
+                        TreatWarningsAsErrors = false,
+                        CompilerOptions = "/optimize"
+                    };
+
+                    foreach (var reference in references.Where(item => !string.IsNullOrWhiteSpace(item)))
+                        parameters.ReferencedAssemblies.Add(reference);
+
+                    var results = provider.CompileAssemblyFromSource(parameters, sourceCode);
+                    if (results.Errors.HasErrors)
+                    {
+                        return new CompileAssemblyResult
+                        {
+                            Success = false,
+                            ErrorCode = "EXECUTE_COMPILE_ERROR",
+                            ErrorMessage = FormatCompilerErrors(results.Errors)
+                        };
+                    }
+
+                    return new CompileAssemblyResult
+                    {
+                        Success = true,
+                        CompiledAssembly = results.CompiledAssembly
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                return new CompileAssemblyResult
+                {
+                    Success = false,
+                    ErrorCode = "EXECUTE_CODEDOM_FAILURE",
+                    ErrorMessage = $"CodeDOM compiler failed: {ex.Message}"
+                };
+            }
+        }
+
+        private static bool ShouldFallbackToCodeDom(string errorMessage)
+        {
+            if (string.IsNullOrWhiteSpace(errorMessage))
+                return false;
+
+            return errorMessage.IndexOf("System.Text.Encoding.CodePages", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   errorMessage.IndexOf("Could not load file or assembly", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   errorMessage.IndexOf("Compiler launch failed", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string FormatCompilerErrors(CompilerErrorCollection errors)
+        {
+            var lines = new List<string>();
+            foreach (CompilerError error in errors)
+            {
+                var severity = error.IsWarning ? "warning" : "error";
+                lines.Add($"{error.FileName}({error.Line},{error.Column}) : {severity} {error.ErrorNumber}: {error.ErrorText}");
+            }
+            return string.Join("\n", lines);
+        }
+
         private static void AddAssemblyIfNotExists(HashSet<string> references, string path)
         {
             if (!string.IsNullOrEmpty(path) && !references.Contains(path))
@@ -336,20 +459,20 @@ namespace UnityBridge
                     else 
                     {
                          var codePreview = string.Join("\n", userCode.Split('\n').Take(20));
-                         cleanedError += $"\n\nИсходный код (preview):\n{codePreview}";
+                         cleanedError += $"\n\nSource preview:\n{codePreview}";
                     }
 
                     if (cleanedError.Contains("CS0246"))
                     {
-                        cleanedError += "\n💡 Подсказка: Тип или пространство имен не найдено. Возможно, скрипт еще не скомпилирован или вы забыли using.";
+                        cleanedError += "\nHint: A type or namespace could not be resolved. The script may not be compiled yet, or a using directive may be missing.";
                     }
                     else if (cleanedError.Contains("CS1061"))
                     {
-                        cleanedError += "\n💡 Подсказка: 'Type' does not contain a definition for 'Member'. Проверьте имя метода или свойства.";
+                        cleanedError += "\nHint: The target type does not contain the requested member. Check the method or property name.";
                     }
                     else if (cleanedError.Contains("CS1501"))
                     {
-                        cleanedError += "\n💡 Подсказка: No overload for method takes N arguments. Проверьте аргументы функции.";
+                        cleanedError += "\nHint: No overload matches the provided arguments. Check the method signature.";
                     }
                 }
 
@@ -479,7 +602,6 @@ public class DynamicCodeExecutor
                 var line = lines[i];
                 var trimmed = line.Trim();
                 
-                // Проверяем, начинается ли массивный литерал
                 if (!inArrayLiteral && Regex.IsMatch(trimmed, @"new\s+\w+\[\]\s*\{") && trimmed.Contains("{"))
                 {
                     inArrayLiteral = true;
@@ -487,7 +609,6 @@ public class DynamicCodeExecutor
                     accumulatedArray.Add(line);
                     braceDepth = CountBraces(line, true) - CountBraces(line, false);
                     
-                    // Если массив уже закрыт на той же строке, обрабатываем как однострочный
                     if (braceDepth == 0)
                     {
                         result.Add(line);
@@ -502,7 +623,6 @@ public class DynamicCodeExecutor
                     accumulatedArray.Add(line);
                     braceDepth += CountBraces(line, true) - CountBraces(line, false);
                     
-                    // Когда баланс скобок восстановлен, склеиваем в одну строку
                     if (braceDepth == 0)
                     {
                         var singleLineArray = string.Join(" ", accumulatedArray.Select(l => l.Trim()));
@@ -517,7 +637,6 @@ public class DynamicCodeExecutor
                 }
             }
             
-            // Если массив не был закрыт, добавляем как есть
             if (inArrayLiteral)
             {
                 result.AddRange(accumulatedArray);
@@ -689,10 +808,104 @@ public class DynamicCodeExecutor
         {
             if (string.IsNullOrWhiteSpace(code))
             {
-                return "return \"Definitions processed.\";";
+                return "return null;";
             }
 
-            return code + "\nreturn \"Execution finished successfully.\";";
+            if (Regex.IsMatch(code, @"\breturn\b"))
+                return code;
+
+            return code + "\nreturn null;";
+        }
+
+        private static HashSet<string> CollectCompileReferences()
+        {
+            var references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var editorRoot = EditorApplication.applicationContentsPath.Replace('\\', '/');
+
+            AddAssemblyIfNotExists(references, "mscorlib.dll");
+            AddAssemblyIfNotExists(references, "System.dll");
+            AddAssemblyIfNotExists(references, "System.Core.dll");
+            AddAssemblyIfNotExists(references, typeof(UnityEngine.GameObject).Assembly.Location);
+            AddAssemblyIfNotExists(references, typeof(UnityEditor.EditorWindow).Assembly.Location);
+            AddAssemblyIfExists(references, Path.Combine(EditorApplication.applicationContentsPath, "NetStandard", "compat", "2.1.0", "shims", "netstandard", "netstandard.dll"));
+            AddAssemblyIfExists(references, Path.Combine(EditorApplication.applicationContentsPath, "NetStandard", "compat", "2.1.0", "shims", "netstandard", "System.Text.Encoding.CodePages.dll"));
+            AddAssemblyIfExists(references, Path.Combine(EditorApplication.applicationContentsPath, "MonoBleedingEdge", "lib", "mono", "4.7.1-api", "System.Text.Encoding.CodePages.dll"));
+            AddAssemblyIfExists(references, Path.Combine(EditorApplication.applicationContentsPath, "MonoBleedingEdge", "lib", "mono", "4.8-api", "System.Text.Encoding.CodePages.dll"));
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    if (asm.IsDynamic || string.IsNullOrEmpty(asm.Location))
+                        continue;
+
+                    var location = asm.Location;
+                    var normalizedLocation = location.Replace('\\', '/');
+                    var fileName = Path.GetFileNameWithoutExtension(location);
+
+                    bool shouldInclude =
+                        normalizedLocation.StartsWith(editorRoot, StringComparison.OrdinalIgnoreCase) ||
+                        normalizedLocation.Contains("/Library/ScriptAssemblies/") ||
+                        string.Equals(fileName, "netstandard", StringComparison.OrdinalIgnoreCase) ||
+                        fileName.StartsWith("System", StringComparison.OrdinalIgnoreCase) ||
+                        fileName.StartsWith("Unity", StringComparison.OrdinalIgnoreCase) ||
+                        fileName.StartsWith("Assembly-CSharp", StringComparison.OrdinalIgnoreCase);
+
+                    if (shouldInclude)
+                        AddAssemblyIfNotExists(references, location);
+                }
+                catch
+                {
+                }
+            }
+
+            return references;
+        }
+
+        private static void EnsureRuntimeSupportAssembliesLoaded()
+        {
+            TryLoadEditorAssembly("System.Text.Encoding.CodePages");
+            TryLoadEditorAssembly("netstandard");
+        }
+
+        private static void TryLoadEditorAssembly(string assemblyName)
+        {
+            try
+            {
+                if (AppDomain.CurrentDomain.GetAssemblies().Any(assembly =>
+                    string.Equals(assembly.GetName().Name, assemblyName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return;
+                }
+
+                foreach (var candidate in GetEditorAssemblyCandidates(assemblyName))
+                {
+                    if (File.Exists(candidate))
+                    {
+                        Assembly.LoadFrom(candidate);
+                        return;
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static IEnumerable<string> GetEditorAssemblyCandidates(string assemblyName)
+        {
+            var appPath = EditorApplication.applicationContentsPath;
+            yield return Path.Combine(appPath, "Managed", $"{assemblyName}.dll");
+            yield return Path.Combine(appPath, "NetStandard", "compat", "2.1.0", "shims", "netstandard", $"{assemblyName}.dll");
+            yield return Path.Combine(appPath, "NetStandard", "compat", "2.1.0", "shims", "netfx", $"{assemblyName}.dll");
+            yield return Path.Combine(appPath, "MonoBleedingEdge", "lib", "mono", "4.7.1-api", $"{assemblyName}.dll");
+            yield return Path.Combine(appPath, "MonoBleedingEdge", "lib", "mono", "4.8-api", $"{assemblyName}.dll");
+        }
+
+        private static void AddAssemblyIfExists(HashSet<string> references, string path)
+        {
+            if (File.Exists(path))
+                AddAssemblyIfNotExists(references, path);
         }
 
         private static void ExtractUsing(string line, HashSet<string> usings)
@@ -773,6 +986,15 @@ public class DynamicCodeExecutor
             public bool Success { get; set; }
             public string Value { get; set; }
             public string ErrorMessage { get; set; }
+            public string ErrorCode { get; set; }
+        }
+
+        private class CompileAssemblyResult
+        {
+            public bool Success { get; set; }
+            public string ErrorMessage { get; set; }
+            public string ErrorCode { get; set; }
+            public Assembly CompiledAssembly { get; set; }
         }
 
         private static string ValidateStatementsOnly(string code)
@@ -790,16 +1012,15 @@ public class DynamicCodeExecutor
 
                     if (Regex.IsMatch(trimmed, @"^\s*namespace\s+\w+", RegexOptions.IgnoreCase))
                     {
-                        return "Statements+Functions: объявления namespace запрещены.";
+                        return "Statements+Functions: namespace declarations are not supported.";
                     }
 
                     if (Regex.IsMatch(trimmed,
                         @"^\s*(public\s+|private\s+|internal\s+|protected\s+)?(static\s+)?(class|interface|enum|struct)\s+\w+",
                         RegexOptions.IgnoreCase))
                     {
-                        return "Statements+Functions: объявления class/interface/enum/struct запрещены.";
+                        return "Statements+Functions: class, interface, enum, and struct declarations are not supported.";
                     }
-                    // Объявления функций разрешены
                 }
             }
             catch { }

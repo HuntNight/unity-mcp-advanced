@@ -16,6 +16,7 @@ namespace UnityBridge
         {
             try
             {
+                var includeInactive = request.GetValue("include_inactive", true);
                 var nameGlob = request.GetValue<string>("name_glob", null);
                 var nameRegex = request.GetValue<string>("name_regex", null);
                 var tagGlob = request.GetValue<string>("tag_glob", null);
@@ -24,15 +25,14 @@ namespace UnityBridge
                 var pathFilter = request.GetValue<string>("path", null);
                 var pathMode = DetectPathMode(pathFilter); // auto: exact|glob|regex
 
-                // Note: startswith(GameObject.name, ...) → glob применяется только в scene_grep, не здесь
-
                 var summary = request.GetValue("summary", false);
 
-                var scene = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene();
-                var rootObjects = scene.GetRootGameObjects();
+                var selection = ResolveSceneScope(request, includeInactive);
+                var rootObjects = selection.Roots.ToArray();
 
                 string resultText = FormatSceneHierarchySimple(
-                    scene,
+                    selection.Label,
+                    selection.Scope,
                     rootObjects,
                     nameGlob,
                     nameRegex,
@@ -41,10 +41,11 @@ namespace UnityBridge
                     maxDepth,
                     pathFilter,
                     pathMode,
+                    includeInactive,
                     summary
                 );
 
-                var message = $"Scene '{scene.name}' analyzed";
+                var message = $"Scope '{selection.Scope}' analyzed";
                 return OperationResult.Ok(message, resultText);
             }
             catch (Exception ex)
@@ -58,11 +59,11 @@ namespace UnityBridge
             var sb = new System.Text.StringBuilder();
             var totalObjects = UnityEngine.Object.FindObjectsOfType<GameObject>().Length;
             
-            sb.AppendLine($"🏞️  Scene: {scene.name}");
-            sb.AppendLine($"📊 Stats: {rootObjects.Length} root objects, {totalObjects} total objects");
-            sb.AppendLine($"🔍 Mode: {(detailed ? "Detailed" : "Basic")}");
+            sb.AppendLine($"Scene: {scene.name}");
+            sb.AppendLine($"Stats: {rootObjects.Length} root objects, {totalObjects} total objects");
+            sb.AppendLine($"Mode: {(detailed ? "Detailed" : "Basic")}");
             sb.AppendLine();
-            sb.AppendLine("📋 Hierarchy:");
+            sb.AppendLine("Hierarchy:");
             
             for (int i = 0; i < rootObjects.Length; i++)
             {
@@ -78,8 +79,8 @@ namespace UnityBridge
             var treeSymbol = isLast ? "└── " : "├── ";
             var childPrefix = prefix + (isLast ? "    " : "│   ");
             
-            var statusIcon = obj.activeInHierarchy ? "✅" : "❌";
-            var objectInfo = $"{statusIcon} {obj.name}";
+            var statusLabel = obj.activeInHierarchy ? "[active]" : "[inactive]";
+            var objectInfo = $"{statusLabel} {obj.name}";
             
             if (obj.tag != "Untagged")
                 objectInfo += $" [{obj.tag}]";
@@ -100,9 +101,9 @@ namespace UnityBridge
                 var rot = transform.eulerAngles;  
                 var scale = transform.localScale;
 
-                sb.AppendLine($"{detailPrefix}📍 Position: ({pos.x:F2}, {pos.y:F2}, {pos.z:F2})");
-                sb.AppendLine($"{detailPrefix}🔄 Rotation: ({rot.x:F1}°, {rot.y:F1}°, {rot.z:F1}°)");
-                sb.AppendLine($"{detailPrefix}📏 Scale: ({scale.x:F2}, {scale.y:F2}, {scale.z:F2})");
+                sb.AppendLine($"{detailPrefix}Position: ({pos.x:F2}, {pos.y:F2}, {pos.z:F2})");
+                sb.AppendLine($"{detailPrefix}Rotation: ({rot.x:F1}°, {rot.y:F1}°, {rot.z:F1}°)");
+                sb.AppendLine($"{detailPrefix}Scale: ({scale.x:F2}, {scale.y:F2}, {scale.z:F2})");
 
                 var components = obj.GetComponents<Component>()
                     .Where(c => c != null)
@@ -110,7 +111,7 @@ namespace UnityBridge
 
                 if (components.Count > 0)
                 {
-                    sb.AppendLine($"{detailPrefix}🔧 Components ({components.Count}): {string.Join(", ", components.Select(c => c.GetType().Name))}");
+                    sb.AppendLine($"{detailPrefix}Components ({components.Count}): {string.Join(", ", components.Select(c => c.GetType().Name))}");
                     foreach (var comp in components)
                     {
                         sb.AppendLine($"{detailPrefix}- {comp.GetType().Name}");
@@ -129,7 +130,8 @@ namespace UnityBridge
         }
 
         private static string FormatSceneHierarchySimple(
-            UnityEngine.SceneManagement.Scene scene,
+            string sceneLabel,
+            string scope,
             GameObject[] rootObjects,
             string nameGlob,
             string nameRegex,
@@ -138,6 +140,7 @@ namespace UnityBridge
             int maxDepth,
             string pathFilter,
             string pathMode,
+            bool includeInactive,
             bool summary = false
         )
         {
@@ -147,7 +150,7 @@ namespace UnityBridge
             var tagRegex = string.IsNullOrEmpty(tagGlob) ? null : new Regex(GlobToRegex(tagGlob), RegexOptions.IgnoreCase);
 
             var subtreeRoots = (!string.IsNullOrEmpty(pathFilter))
-                ? ResolvePathRoots(rootObjects, pathFilter, pathMode, true, true)
+                ? ResolvePathRoots(rootObjects, pathFilter, pathMode, includeInactive, true)
                 : rootObjects.ToList();
 
             int scanned = 0, matched = 0, emitted = 0;
@@ -174,6 +177,7 @@ namespace UnityBridge
                 if (timedOut) return;
                 if ((DateTime.UtcNow - start).TotalMilliseconds > DefaultTimeoutMs) { timedOut = true; return; }
                 if (maxDepth >= 0 && depth > maxDepth) return;
+                if (!includeInactive && !obj.activeInHierarchy) return;
 
                 scanned++;
                 bool passName = (nameGlobRegex == null && nameRegexCompiled == null)
@@ -202,15 +206,16 @@ namespace UnityBridge
 
             foreach (var root in subtreeRoots)
             {
-                Traverse(root, root.name, 0);
+                Traverse(root, BuildPath(root), 0);
                 if (timedOut || emitted >= maxCount) break;
             }
 
             bool truncated = (maxResults > 0 && matched > emitted) || timedOut;
-            var header = $"🏞️  Scene: {scene.name}\n" +
-                $"📦 Path: {pathFilter ?? "(root)"} | max_depth={maxDepth}\n" +
-                $"📄 Limit: {(maxResults <= 0 ? "∞" : maxResults.ToString())}\n" +
-                $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}\n";
+            var header = $"Scope: {scope}\n" +
+                $"Scenes: {sceneLabel}\n" +
+                $"Path: {pathFilter ?? "(root)"} | max_depth={maxDepth}\n" +
+                $"Limit: {(maxResults <= 0 ? "∞" : maxResults.ToString())}\n" +
+                $"Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}\n";
 
             if (truncated)
             {
@@ -232,7 +237,7 @@ namespace UnityBridge
 
             sb.Insert(0, header);
 
-            sb.AppendLine("📋 Results:\n");
+            sb.AppendLine("Results:\n");
 
             if (emitted == 0) sb.AppendLine("(no results)");
 
@@ -290,16 +295,16 @@ namespace UnityBridge
 
             foreach (var root in rootObjects)
             {
-                Traverse(root, root.name, 0);
+                Traverse(root, BuildPath(root), 0);
                 if (timedOut) break;
                 if (maxResults > 0 && emitted >= maxResults) break;
             }
 
-            sb.Insert(0, $"🏞️  Scene: {scene.name}\n" +
-                        $"🔎 Filter: {(string.IsNullOrEmpty(nameGlob) ? "(none)" : nameGlob)} | include_inactive={includeInactive} | max_depth={maxDepth}\n" +
-                        $"📄 Paging: offset={offset}, limit={(maxResults <= 0 ? "∞" : maxResults)}\n" +
-                        $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}\n\n" +
-                        "📋 Results:\n");
+            sb.Insert(0, $"Scene: {scene.name}\n" +
+                        $"Filter: {(string.IsNullOrEmpty(nameGlob) ? "(none)" : nameGlob)} | include_inactive={includeInactive} | max_depth={maxDepth}\n" +
+                        $"Paging: offset={offset}, limit={(maxResults <= 0 ? "∞" : maxResults)}\n" +
+                        $"Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}\n\n" +
+                        "Results:\n");
 
             if (emitted == 0)
             {
@@ -387,19 +392,19 @@ namespace UnityBridge
 
             foreach (var root in subtreeRoots)
             {
-                Traverse(root, root.name, 0);
+                Traverse(root, BuildPath(root), 0);
                 if (timedOut || emitted >= maxCount) break;
             }
 
             var sb = new System.Text.StringBuilder();
             bool truncated = (maxResults > 0 && emitted < matched) || timedOut;
-            sb.AppendLine($"🏞️  Scene: {scene.name}");
-            sb.AppendLine($"🔎 Filters: nameGlob='{nameGlob}', nameRegex='{nameRegex}', tagGlob='{tagGlob}', any=[{string.Join(",", componentsAny)}], all=[{string.Join(",", componentsAll)}]");
-            sb.AppendLine($"📦 Path: {pathFilter ?? "(root)"} | include_inactive={includeInactive} | max_depth={maxDepth}");
-            sb.AppendLine($"📄 Paging: offset={offset}, limit={(maxResults <= 0 ? "∞" : maxResults.ToString())}");
-            sb.AppendLine($"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}");
+            sb.AppendLine($"Scene: {scene.name}");
+            sb.AppendLine($"Filters: nameGlob='{nameGlob}', nameRegex='{nameRegex}', tagGlob='{tagGlob}', any=[{string.Join(",", componentsAny)}], all=[{string.Join(",", componentsAll)}]");
+            sb.AppendLine($"Path: {pathFilter ?? "(root)"} | include_inactive={includeInactive} | max_depth={maxDepth}");
+            sb.AppendLine($"Paging: offset={offset}, limit={(maxResults <= 0 ? "∞" : maxResults.ToString())}");
+            sb.AppendLine($"Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}");
             sb.AppendLine();
-            sb.AppendLine("📋 Results:");
+            sb.AppendLine("Results:");
 
             int printed = 0; int skipped = 0;
             void TraversePrint(GameObject obj, string path, int depth)
@@ -424,20 +429,20 @@ namespace UnityBridge
                     if (skipped < offset) { skipped++; }
                     else if (printed < emitted)
                     {
-                        var statusIcon = obj.activeInHierarchy ? "✅" : "❌";
+                        var statusLabel = obj.activeInHierarchy ? "[active]" : "[inactive]";
                         var layerName = LayerMask.LayerToName(obj.layer);
                         var tag = obj.tag != "Untagged" ? $" [{obj.tag}]" : "";
                         var layerStr = !string.IsNullOrEmpty(layerName) && layerName != "Default" ? $" (layer: {layerName})" : "";
                         var idStr = $"@{obj.GetInstanceID()}";
-                        sb.AppendLine($"• {statusIcon} {obj.name}{tag}{layerStr} — path: {path} — id: {idStr}");
+                        sb.AppendLine($"• {statusLabel} {obj.name}{tag}{layerStr} — path: {path} — id: {idStr}");
                         if (detailed)
                         {
                             var t = obj.transform;
                             var pos = t.position; var rot = t.eulerAngles; var scale = t.localScale;
-                            sb.AppendLine($"   📍 pos: ({pos.x:F2},{pos.y:F2},{pos.z:F2}) | 🔄 rot: ({rot.x:F1}°, {rot.y:F1}°, {rot.z:F1}°) | 📏 scale: ({scale.x:F2},{scale.y:F2},{scale.z:F2})");
+                            sb.AppendLine($"   pos: ({pos.x:F2},{pos.y:F2},{pos.z:F2}) | rot: ({rot.x:F1}°, {rot.y:F1}°, {rot.z:F1}°) | scale: ({scale.x:F2},{scale.y:F2},{scale.z:F2})");
                             var compObjs = obj.GetComponents<Component>().Where(c => c != null).ToList();
                             var comps = string.Join(", ", compObjs.Select(c => c.GetType().Name));
-                            if (!string.IsNullOrEmpty(comps)) sb.AppendLine($"   🔧 {comps}");
+                            if (!string.IsNullOrEmpty(comps)) sb.AppendLine($"   components: {comps}");
                             foreach (var comp in compObjs.Where(c => !(c is Transform)))
                             {
                                 sb.AppendLine($"   - {comp.GetType().Name}");
@@ -458,14 +463,15 @@ namespace UnityBridge
             var rootsToPrint = (!string.IsNullOrEmpty(pathFilter)) ? ResolvePathRoots(rootObjects, pathFilter, pathMode, includeInactive, caseInsensitive) : rootObjects.ToList();
             foreach (var root in rootsToPrint)
             {
-                TraversePrint(root, root.name, 0);
+                TraversePrint(root, BuildPath(root), 0);
                 if (printed >= emitted) break;
             }
             return sb.ToString();
         }
 
         private static string FormatSceneSelectQueryWhere(
-            UnityEngine.SceneManagement.Scene scene,
+            string sceneLabel,
+            string scope,
             GameObject[] rootObjects,
             List<string> selectList,
             string whereExpr,
@@ -475,7 +481,8 @@ namespace UnityBridge
             int maxResults,
             int maxDepth,
             string pathFilter,
-            string pathMode
+            string pathMode,
+            bool includeInactive
         )
         {
             var start = DateTime.UtcNow;
@@ -484,7 +491,7 @@ namespace UnityBridge
             var tagRegex = string.IsNullOrEmpty(tagGlob) ? null : new Regex(GlobToRegex(tagGlob), RegexOptions.IgnoreCase);
 
             var subtreeRoots = (!string.IsNullOrEmpty(pathFilter))
-                ? ResolvePathRoots(rootObjects, pathFilter, pathMode, true, true)
+                ? ResolvePathRoots(rootObjects, pathFilter, pathMode, includeInactive, true)
                 : rootObjects.ToList();
 
             int scanned = 0, matched = 0, emitted = 0;
@@ -498,6 +505,7 @@ namespace UnityBridge
                 if (timedOut) return;
                 if ((DateTime.UtcNow - start).TotalMilliseconds > DefaultTimeoutMs) { timedOut = true; return; }
                 if (maxDepth >= 0 && depth > maxDepth) return;
+                if (!includeInactive && !obj.activeInHierarchy) return;
 
                 scanned++;
                 bool passName = (nameGlobRegex == null && nameRegexCompiled == null)
@@ -528,7 +536,7 @@ namespace UnityBridge
 
             foreach (var root in subtreeRoots)
             {
-                Traverse(root, root.name, 0);
+                Traverse(root, BuildPath(root), 0);
                 if (timedOut || emitted >= maxCount) break;
             }
 
@@ -536,13 +544,14 @@ namespace UnityBridge
             var selectPreview = string.Join(", ", selectList);
             bool truncated = (maxResults > 0 && emitted < matched) || timedOut;
             sb.Insert(0,
-                $"🏞️  Scene: {scene.name}\n" +
-                $"🎯 Select: [{selectPreview}]\n" +
-                (!string.IsNullOrEmpty(whereExpr) ? $"🔎 Where: {whereExpr}\n" : string.Empty) +
-                $"📦 Path: {pathFilter ?? "(root)"} | max_depth={maxDepth}\n" +
-                $"📄 Limit: {(maxResults <= 0 ? "∞" : maxResults.ToString())}\n" +
-                $"⏱️ Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}\n\n" +
-                "📋 Results:\n");
+                $"Scope: {scope}\n" +
+                $"Scenes: {sceneLabel}\n" +
+                $"Select: [{selectPreview}]\n" +
+                (!string.IsNullOrEmpty(whereExpr) ? $"Where: {whereExpr}\n" : string.Empty) +
+                $"Path: {pathFilter ?? "(root)"} | max_depth={maxDepth}\n" +
+                $"Limit: {(maxResults <= 0 ? "∞" : maxResults.ToString())}\n" +
+                $"Scan: scanned={scanned}, matched={matched}, emitted={emitted}{(timedOut ? " (timed out)" : "")}{(truncated ? " (truncated)" : "")}\n\n" +
+                "Results:\n");
 
             if (emitted == 0)
             {
@@ -554,7 +563,6 @@ namespace UnityBridge
 
         private static void EmitSelectionLine(System.Text.StringBuilder sb, GameObject obj, string path, List<string> selectList)
         {
-            var statusIcon = obj.activeInHierarchy ? "✅" : "❌";
             var idStr = obj.GetInstanceID();
             sb.AppendLine($"• {path} - id:{idStr}");
 
@@ -737,7 +745,6 @@ namespace UnityBridge
             return null;
         }
 
-        // WHERE DSL (упрощённая реализация)
         private static class WhereDsl
         {
             public abstract class Node { }
@@ -1053,21 +1060,21 @@ namespace UnityBridge
 
         private static void AppendObjectLine(System.Text.StringBuilder sb, GameObject obj, string path, bool detailed)
         {
-            var statusIcon = obj.activeInHierarchy ? "✅" : "❌";
+            var statusLabel = obj.activeInHierarchy ? "[active]" : "[inactive]";
             var layerName = LayerMask.LayerToName(obj.layer);
             var tag = obj.tag != "Untagged" ? $" [{obj.tag}]" : "";
             var layerStr = !string.IsNullOrEmpty(layerName) && layerName != "Default" ? $" (layer: {layerName})" : "";
             var idStr = $"@{obj.GetInstanceID()}";
-            sb.AppendLine($"• {statusIcon} {obj.name}{tag}{layerStr} — path: {path} — id: {idStr}");
+            sb.AppendLine($"• {statusLabel} {obj.name}{tag}{layerStr} — path: {path} — id: {idStr}");
 
             if (detailed)
             {
                 var t = obj.transform;
                 var pos = t.position; var rot = t.eulerAngles; var scale = t.localScale;
-                sb.AppendLine($"   📍 pos: ({pos.x:F2},{pos.y:F2},{pos.z:F2}) | 🔄 rot: ({rot.x:F1}°, {rot.y:F1}°, {rot.z:F1}°) | 📏 scale: ({scale.x:F2},{scale.y:F2},{scale.z:F2})");
+                sb.AppendLine($"   pos: ({pos.x:F2},{pos.y:F2},{pos.z:F2}) | rot: ({rot.x:F1}°, {rot.y:F1}°, {rot.z:F1}°) | scale: ({scale.x:F2},{scale.y:F2},{scale.z:F2})");
                 var components = obj.GetComponents<Component>().Where(c => c != null);
                 var comps = string.Join(", ", components.Select(c => c.GetType().Name));
-                if (!string.IsNullOrEmpty(comps)) sb.AppendLine($"   🔧 {comps}");
+                if (!string.IsNullOrEmpty(comps)) sb.AppendLine($"   components: {comps}");
                 foreach (var comp in components)
                 {
                     sb.AppendLine($"   - {comp.GetType().Name}");
@@ -1302,8 +1309,8 @@ namespace UnityBridge
                     var d = new Dictionary<string, object>
                     {
                         { "mass", rb.mass },
-                        { "drag", rb.linearDamping },
-                        { "angularDrag", rb.angularDamping },
+                        { "drag", rb.drag },
+                        { "angularDrag", rb.angularDrag },
                         { "useGravity", rb.useGravity },
                         { "isKinematic", rb.isKinematic },
                         { "constraints", rb.constraints.ToString() }
@@ -1518,7 +1525,7 @@ namespace UnityBridge
         {
             try
             {
-                // Входные параметры
+                var scopeSelection = ResolveSceneScope(request, request.GetValue("include_inactive", false));
                 var centerObjName = request.GetValue<string>("center_object", null);
                 var centerPosObj = request.Data.GetValueOrDefault("center_position");
                 Vector3? centerFromPosition = null;
@@ -1539,11 +1546,10 @@ namespace UnityBridge
                 var caseInsensitive = request.GetValue("case_insensitive", true);
                 var detailed = request.GetValue("detailed", false);
 
-                // Определяем центр
                 Vector3 center;
                 if (!string.IsNullOrEmpty(centerObjName))
                 {
-                    var candidates = UnityEngine.Object.FindObjectsOfType<GameObject>();
+                    var candidates = scopeSelection.Objects;
                     var found = candidates.FirstOrDefault(go => go != null && string.Equals(go.name, centerObjName, caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
                     if (found == null)
                         return OperationResult.Fail($"Center object '{centerObjName}' not found");
@@ -1555,19 +1561,16 @@ namespace UnityBridge
                 }
                 else
                 {
-                    // если ничего не задано — центр активной камеры/сцены (0,0,0)
                     center = Camera.main != null ? Camera.main.transform.position : Vector3.zero;
                 }
 
-                // Фильтры
                 var nameGlobRegex = string.IsNullOrEmpty(nameGlob) ? null : new Regex(GlobToRegex(nameGlob), caseInsensitive ? RegexOptions.IgnoreCase : RegexOptions.None);
                 var nameRegexCompiled = string.IsNullOrEmpty(nameRegex) ? null : new Regex(nameRegex, caseInsensitive ? RegexOptions.IgnoreCase : RegexOptions.None);
                 var tagRegex = string.IsNullOrEmpty(tagGlob) ? null : new Regex(GlobToRegex(tagGlob), caseInsensitive ? RegexOptions.IgnoreCase : RegexOptions.None);
                 var compAny = (componentsAny ?? new List<string>()).Select(s => s.ToLowerInvariant()).ToList();
                 var compAll = (componentsAll ?? new List<string>()).Select(s => s.ToLowerInvariant()).ToList();
 
-                // Поиск кандидатов — безопасный и быстрый: сначала фильтруем по расстоянию, затем по критериям
-                var allObjects = UnityEngine.Object.FindObjectsOfType<GameObject>();
+                var allObjects = scopeSelection.Objects;
                 var collected = new List<Dictionary<string, object>>();
 
                 foreach (var go in allObjects)
@@ -1599,16 +1602,17 @@ namespace UnityBridge
                     if (collected.Count >= Math.Max(1, maxResults)) break;
                 }
 
-                // Ответ только текстом
                 var sb = new StringBuilder();
-                sb.AppendLine($"📍 Center: ({center.x:F2},{center.y:F2},{center.z:F2}), r={radius:F2}");
-                sb.AppendLine($"🔎 Returned: {collected.Count}");
+                sb.AppendLine($"Scope: {scopeSelection.Scope}");
+                sb.AppendLine($"Scenes: {scopeSelection.Label}");
+                sb.AppendLine($"Center: ({center.x:F2},{center.y:F2},{center.z:F2}), r={radius:F2}");
+                sb.AppendLine($"Returned: {collected.Count}");
                 foreach (var d in collected)
                 {
                     var name = d.ContainsKey("name") ? d["name"] : "?";
                     var path = d.ContainsKey("path") ? d["path"] : "?";
                     var active = d.ContainsKey("active") ? d["active"].ToString() : "?";
-                    sb.AppendLine($"• {(active=="True"?"✅":"❌")} {name} — {path}");
+                    sb.AppendLine($"• {(active=="True"?"[active]":"[inactive]")} {name} — {path}");
                 }
                 return OperationResult.Ok($"Radius query at {center} (r={radius})", sb.ToString());
             }
@@ -1634,6 +1638,7 @@ namespace UnityBridge
         {
             try
             {
+                var includeInactive = request.GetValue("include_inactive", true);
                 var nameGlob = request.GetValue<string>("name_glob", null);
                 var nameRegex = request.GetValue<string>("name_regex", null);
                 var tagGlob = request.GetValue<string>("tag_glob", null);
@@ -1646,11 +1651,12 @@ namespace UnityBridge
                 var pathFilter = request.GetValue<string>("path", null);
                 var pathMode = DetectPathMode(pathFilter);
 
-                var scene = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene();
-                var rootObjects = scene.GetRootGameObjects();
+                var selection = ResolveSceneScope(request, includeInactive);
+                var rootObjects = selection.Roots.ToArray();
 
                 var text = FormatSceneSelectQueryWhere(
-                    scene,
+                    selection.Label,
+                    selection.Scope,
                     rootObjects,
                     selectList,
                     whereExpr,
@@ -1660,10 +1666,11 @@ namespace UnityBridge
                     maxResults,
                     maxDepth,
                     pathFilter,
-                    pathMode
+                    pathMode,
+                    includeInactive
                 );
 
-                return OperationResult.Ok("Scene grep completed", text);
+                return OperationResult.Ok($"Scene grep completed for scope '{selection.Scope}'", text);
             }
             catch (Exception ex)
             {

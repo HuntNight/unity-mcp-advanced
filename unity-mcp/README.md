@@ -1,83 +1,89 @@
 # Unity MCP Server
 
-The `unity-mcp` server acts as a bridge between Modern Context Protocol (MCP) clients (like Cursor) and the Unity Editor. It manages external tools and communication with the Unity instance.
+`unity-mcp` is the Node-side MCP server for the Unity bridge. It loads tool modules from `tools/`, exposes them through stdio, and forwards Unity requests to the Editor bridge.
 
-## Project Structure
+## Files
 
-```
+```text
 unity-mcp/
-├── index.js              # Server entry point
-├── tools/                # Dynamic MCP modules
-│   ├── unity.js          # Unity Bridge tools
-│   └── terminal.js       # System tools
-└── utils/                # Shared utilities
-    ├── mcpServer.js      # Dynamic module loader
-    └── logger.js         # Logging system
+├── docs/
+├── index.js
+├── package.json
+├── tools/
+│   ├── unity.js
+│   └── terminal.js
+└── utils/
+    ├── logger.js
+    └── mcpServer.js
 ```
 
-## Adding New Modules
+## Run
 
-1. Create a file `tools/my-module.js`.
-2. Export the module using the standard format:
+```bash
+npm install
+npm run build
+npm start
+```
+
+## Tool module format
 
 ```javascript
-export const myTools = [
-  {
-    name: "tool_name", // Will be available as my_tool_name
-    description: "Tool description",
-    handler: async (args) => {
-      return `Result: ${args.param}`;
-    }
-  }
-];
-
 export const myModule = {
-  namespace: "my",
-  description: "Module description",
-  tools: myTools
+  namespace: 'my',
+  description: 'Module description',
+  tools: [
+    {
+      name: 'tool_name',
+      description: 'Tool description',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async (args) => ({ content: [{ type: 'text', text: 'ok' }] })
+    }
+  ]
 };
 ```
 
-3. Restart the MCP server in Cursor.
+The runtime prefixes each tool with `<namespace>_`, so `tool_name` becomes `my_tool_name`.
 
-## Available Modules
+## Unity tools
 
-### Unity Bridge (`unity.js`)
-Tools for interacting with the Unity Editor. All tool names are prefixed with `unity_`.
+- `unity_health`
+- `unity_list_scenes`
+- `unity_find_objects`
+- `unity_inspect_object`
+- `unity_set_transform`
+- `unity_set_light`
+- `unity_set_camera`
+- `unity_set_active`
+- `unity_scene_hierarchy`
+- `unity_scene_grep`
+- `unity_scene_radius`
+- `unity_execute`
+- `unity_play_mode`
+- `unity_screenshot`
+- `unity_camera_screenshot`
 
-- **unity_screenshot**: Capture Game/Scene view screenshots.
-- **unity_camera_screenshot**: Capture screenshot from a custom camera position.
-- **unity_scene_hierarchy**: specific hierarchy analysis (supports glob/regex filtering).
-- **unity_scene_grep**: Advanced scene querying with SQL-like DSL.
-- **unity_execute**: Execute arbitrary C# code.
-- **unity_play_mode**: Control Play Mode.
-- **unity_scene_radius**: Find objects within a radius.
+## Response model
 
-### Terminal Tools (`terminal.js`)
-System utilities. All tool names are prefixed with `terminal_`.
+Unity responses are normalized to MCP content and may include:
 
-- **terminal_system_info**: System diagnostics (ports, processes).
-- **terminal_check_port**: Check if a port is in use.
-- **terminal_find_process**: Find running processes by name.
-- **terminal_safe_curl**: Execute safe HTTP requests.
-- **terminal_wait_for_user**: Request user interaction.
+- `messages`: text or image payloads.
+- `data`: structured payload when Unity returns one.
+- `errorCode`: structured failure category for bridge and execution errors.
+- `logs`: recent Unity logs captured during the request.
+- `meta`: request id, endpoint, and duration.
 
-## Tool Decorators
+## Query scopes
 
-The server supports a decorator system for middleware-like functionality (logging, performance metrics, etc.) applied at the tool, module, or system level.
+Scene-aware tools accept `scope`:
 
-## Error Handling
+- `active_scene`
+- `all_loaded_scenes`
+- `dont_destroy_on_load`
+- `all_loaded_objects`
 
-Tools should throw standard JavaScript errors. The server automatically catches them and formats them into user-friendly error messages that do not crash the server.
+`unity_find_objects`, `unity_inspect_object`, `unity_camera_screenshot`, and the direct edit tools default to `all_loaded_objects` so runtime-only preview objects are easier to reach.
 
-```javascript
-throw new Error("Operation failed");
-```
+## Documentation
 
-## DSL Specification (scene_grep)
-
-The `unity_scene_grep` tool uses a custom DSL for querying the scene.
-
-- **WHERE Clause**: Logic expressions (`and`, `or`, `not`), comparisons (`==`, `!=`, `>`, etc.), and string functions (`contains`, `startswith`, `matches`).
-- **SELECT Clause**: List of fields to retrieve (e.g., `["GameObject.name", "Transform.position"]`).
-- **Path**: Hierarchy path filtering (supports Glob and Regex).
+- `docs/overview.md`
+- `docs/api.md`

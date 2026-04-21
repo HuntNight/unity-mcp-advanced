@@ -5,8 +5,7 @@ using System.IO;
 namespace UnityBridge
 {
     /// <summary>
-    /// Простой UI для управления Unity Bridge
-    /// Новая функциональная архитектура - минимальный интерфейс
+    /// Editor window for starting the Unity bridge and running smoke checks.
     /// </summary>
     public class UnityBridgeWindow : EditorWindow
     {
@@ -34,7 +33,6 @@ namespace UnityBridge
         
         private void OnEnable()
         {
-            // Автостарт при включении (если нужно)
             if (autoStartEnabled && !UnityBridge.IsRunning)
             {
                 var started = UnityBridge.StartServer(serverPort);
@@ -43,7 +41,6 @@ namespace UnityBridge
             
             UpdateStatus();
 
-            // Стили
             titleStyle = new GUIStyle(EditorStyles.boldLabel)
             {
                 fontSize = 18
@@ -71,18 +68,15 @@ namespace UnityBridge
         
         private void OnDisable()
         {
-            // При отключении окна сервер продолжает работать
         }
         
         private void OnGUI()
         {
             EditorGUILayout.Space(10);
             
-            // Заголовок
             GUILayout.Label("Unity Bridge MCP", titleStyle);
             EditorGUILayout.Space(5);
             
-            // Статус сервера
             EditorGUILayout.BeginHorizontal();
             var isRunning = UnityBridge.IsRunning;
             var statusColor = isRunning ? Color.green : Color.red;
@@ -96,7 +90,6 @@ namespace UnityBridge
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
             
-            // ПАНЕЛЬ УПРАВЛЕНИЯ СЕРВЕРОМ
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginVertical("box");
             GUILayout.Label("Server Control", EditorStyles.boldLabel);
@@ -127,12 +120,11 @@ namespace UnityBridge
             if (isRunning)
             {
                 EditorGUILayout.Space(2);
-                EditorGUILayout.LabelField("URL", $"http://localhost:{serverPort}");
-                EditorGUILayout.LabelField("Endpoints", "/api/screenshot, /api/camera_screenshot, /api/execute, /api/scene_hierarchy, /api/scene_grep");
+                EditorGUILayout.LabelField("URLs", $"http://localhost:{serverPort}, http://127.0.0.1:{serverPort}");
+                EditorGUILayout.LabelField("Endpoints", "/api/health, /api/list_scenes, /api/find_objects, /api/inspect_object, /api/set_transform, /api/set_light, /api/set_camera, /api/set_active, /api/screenshot, /api/camera_screenshot, /api/execute, /api/scene_hierarchy, /api/scene_grep, /api/scene_radius");
             }
             EditorGUILayout.EndVertical();
             
-            // Статусные сообщения
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginVertical("box");
             GUILayout.Label("Status & Logs", EditorStyles.boldLabel);
@@ -154,7 +146,6 @@ namespace UnityBridge
             EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
             
-            // ТЕСТЫ MCP ИНСТРУМЕНТОВ
             EditorGUILayout.Space(8);
             showTests = EditorGUILayout.Foldout(showTests, "MCP Tools Tests", true);
             if (showTests)
@@ -162,6 +153,21 @@ namespace UnityBridge
                 EditorGUILayout.BeginVertical("box");
                 EditorGUILayout.LabelField("Run quick tests to validate tools", EditorStyles.miniLabel);
                 EditorGUILayout.Space(4);
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button("Test Health", GUILayout.Height(24)))
+                {
+                    if (isRunning) TestHealth(); else statusMessage = "Start server first";
+                }
+                if (GUILayout.Button("Test List Scenes", GUILayout.Height(24)))
+                {
+                    if (isRunning) TestListScenes(); else statusMessage = "Start server first";
+                }
+                if (GUILayout.Button("Test Find Objects", GUILayout.Height(24)))
+                {
+                    if (isRunning) TestFindObjects(); else statusMessage = "Start server first";
+                }
+                EditorGUILayout.EndHorizontal();
+
                 EditorGUILayout.BeginHorizontal();
                 if (GUILayout.Button("Test Screenshot (Game)", GUILayout.Height(24)))
                 {
@@ -213,7 +219,6 @@ namespace UnityBridge
                 EditorGUILayout.EndVertical();
             }
             
-            // КОНФИГ ДЛЯ CURSOR MCP
             EditorGUILayout.Space(8);
             showConfig = EditorGUILayout.Foldout(showConfig, "Cursor MCP Configuration", true);
             if (showConfig)
@@ -248,7 +253,6 @@ namespace UnityBridge
         
         private void UpdateStatus()
         {
-            // Принудительно обновляем окно
             Repaint();
         }
         
@@ -256,7 +260,6 @@ namespace UnityBridge
         {
             try
             {
-                // Простой тест - создаем запрос и проверяем ответ
                 var testData = new System.Collections.Generic.Dictionary<string, object>
                 {
                     { "width", 800 },
@@ -282,6 +285,57 @@ namespace UnityBridge
                 lastTestResult = $"Screenshot (Game): ERROR - {ex.Message}";
             }
             
+            UpdateStatus();
+        }
+
+        private void TestHealth()
+        {
+            try
+            {
+                var request = new UnityRequest("/api/health", new System.Collections.Generic.Dictionary<string, object>());
+                var result = UnityOperations.GetBridgeHealth(request);
+                lastTestResult = result.Success ? $"Health: SUCCESS\n{result.Data}" : $"Health: FAILED - {result.Error}";
+            }
+            catch (System.Exception ex)
+            {
+                lastTestResult = $"Health: ERROR - {ex.Message}";
+            }
+            UpdateStatus();
+        }
+
+        private void TestListScenes()
+        {
+            try
+            {
+                var request = new UnityRequest("/api/list_scenes", new System.Collections.Generic.Dictionary<string, object>());
+                var result = UnityOperations.ListScenes(request);
+                lastTestResult = result.Success ? $"List Scenes: SUCCESS\n{result.Data}" : $"List Scenes: FAILED - {result.Error}";
+            }
+            catch (System.Exception ex)
+            {
+                lastTestResult = $"List Scenes: ERROR - {ex.Message}";
+            }
+            UpdateStatus();
+        }
+
+        private void TestFindObjects()
+        {
+            try
+            {
+                var data = new System.Collections.Generic.Dictionary<string, object>
+                {
+                    { "scope", "all_loaded_objects" },
+                    { "max_results", 5 },
+                    { "include_inactive", true }
+                };
+                var request = new UnityRequest("/api/find_objects", data);
+                var result = UnityOperations.FindObjects(request);
+                lastTestResult = result.Success ? $"Find Objects: SUCCESS\n{result.Data}" : $"Find Objects: FAILED - {result.Error}";
+            }
+            catch (System.Exception ex)
+            {
+                lastTestResult = $"Find Objects: ERROR - {ex.Message}";
+            }
             UpdateStatus();
         }
 

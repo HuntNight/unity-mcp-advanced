@@ -117,7 +117,6 @@ namespace UnityBridge
                 }
             }
 
-            // Statements + Functions режим: запрещаем только объявления типов и namespace
             try
             {
                 var lines = code.Split('\n');
@@ -126,25 +125,20 @@ namespace UnityBridge
                     var rawLine = lines[i];
                     var trimmed = rawLine.Trim();
 
-                    // Пропускаем пустые строки и комментарии
                     if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("//"))
                         continue;
 
-                    // Блоки namespace запрещены
                     if (Regex.IsMatch(trimmed, @"^\s*namespace\s+\w+", RegexOptions.IgnoreCase))
                     {
-                        return "Statements-only: объявления namespace запрещены. Оставьте только инструкции и выражения.";
+                        return "Statements-only: namespace declarations are not supported. Use statements and expressions only.";
                     }
 
-                    // Детектируем объявления типов (class/interface/enum/struct)
                     if (Regex.IsMatch(trimmed,
                         @"^\s*(public\s+|private\s+|internal\s+|protected\s+)?(static\s+)?(class|interface|enum|struct)\s+\w+",
                         RegexOptions.IgnoreCase))
                     {
-                        return "Statements-only: объявления class/interface/enum/struct запрещены. Используйте только инструкции без определения типов.";
+                        return "Statements-only: class, interface, enum, and struct declarations are not supported. Use statements without type declarations.";
                     }
-
-                    // Объявления функций РАЗРЕШЕНЫ (обрабатываются и статифицируются позже)
                 }
             }
             catch { /* ignore and allow fallback */ }
@@ -163,7 +157,6 @@ namespace UnityBridge
                     return OperationResult.Ok($"Play Mode is already {(enabled ? "enabled" : "disabled")}");
                 }
 
-                // Первичная попытка — синхронно, чтобы сразу узнать об ошибке
                 try
                 {
                     EditorApplication.isPlaying = enabled;
@@ -177,7 +170,6 @@ namespace UnityBridge
                     return OperationResult.Fail($"Play Mode change failed: {ex.Message}");
                 }
 
-                // Фолбэк: schedule через delayCall (например, если сразу не сработало)
                 EditorApplication.delayCall += () =>
                 {
                     try

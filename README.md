@@ -1,51 +1,42 @@
-# Unity MCP Integration
+# Unity MCP Advanced
 
-**Integration of AI assistants with Unity3D via Model Context Protocol (MCP).**
+`unity-mcp-advanced` is a Unity Editor bridge for MCP clients such as Cursor. It exposes scene inspection, screenshots, Play Mode control, and controlled C# execution through a small Node MCP server plus a Unity Editor HTTP bridge.
 
-[![Unity](https://img.shields.io/badge/Unity-2022.3+-black.svg?logo=unity)](https://unity.com/)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg?logo=node.js)](https://nodejs.org/)
-[![MCP](https://img.shields.io/badge/MCP-2.0-blue.svg)](https://modelcontextprotocol.io/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+## What changed in this refactor
 
-Allows AI assistants (like Claude, Cursor AI) to directly interact with the Unity Editor: execute code, analyze the scene, and manage the project.
+- One MCP entrypoint at `unity-mcp/index.js`.
+- One transport path from MCP to Unity.
+- Unified response contract: `success`, `messages`, `data`, `logs`, `meta`.
+- Explicit scene scopes for queries: `active_scene`, `all_loaded_scenes`, `dont_destroy_on_load`, `all_loaded_objects`.
+- New smoke and inspection tools: `unity_health`, `unity_list_scenes`, `unity_find_objects`, `unity_inspect_object`.
+- Direct edit tools for runtime workflows: `unity_set_transform`, `unity_set_light`, `unity_set_camera`, `unity_set_active`.
+- `unity_camera_screenshot` can now render from an existing preview camera.
+- `unity_execute` now respects `safe_mode`, reports structured error codes, and resolves more runtime assemblies before execution.
 
-## Key Features
+## Layout
 
-### Unity Integration
-- **Code Execution**: Run C# code in the Editor context (`unity_execute`).
-- **Scene Analysis**: Inspect object hierarchy and components (`unity_scene_hierarchy`).
-- **Visual Feedback**: Capture screenshots of Game and Scene views (`unity_screenshot`).
-- **Scene Querying**: Advanced object search using SQL-like DSL (`unity_scene_grep`).
+```text
+unity-mcp-advanced/
+├── unity-mcp/
+│   ├── docs/
+│   ├── index.js
+│   ├── tools/
+│   │   ├── unity.js
+│   │   └── terminal.js
+│   ├── utils/
+│   └── tools/unity-bridge/unity-extension/Editor/
+└── README.md
+```
 
-### System Tools
-- **Diagnostics**: Monitor ports and system processes (`terminal_system_info`).
-- **Process Management**: Search for running processes (`terminal_find_process`).
-- **Network**: Check port availability (`terminal_check_port`).
+## Setup
 
-## Installation
+1. Install Node.js 18+.
+2. Run `npm install` in `unity-mcp/`.
+3. Open the Unity project and install the Unity package from `unity-mcp/tools/unity-bridge/unity-extension/package.json`.
+4. Open `Window -> Unity Bridge` in Unity and start the server.
+5. Point Cursor MCP config to `unity-mcp/index.js`.
 
-### Prerequisites
-- **Unity 2022.3+**
-- **Node.js 18+**
-- **macOS** (primary support) or **Windows** (experimental)
-
-### 1. Setup MCP Server
-
-1. Clone the repository:
-   ```bash
-   git clone git@github.com:HuntNight/unity-mcp-advanced.git
-   cd unity-mcp
-   ```
-
-2. Install dependencies:
-   ```bash
-   cd unity-mcp
-   npm install
-   ```
-
-### 2. Configure Cursor
-
-Create or update `.cursor/mcp.json` in your project root:
+Example MCP config:
 
 ```json
 {
@@ -53,73 +44,28 @@ Create or update `.cursor/mcp.json` in your project root:
     "unity-mcp": {
       "command": "node",
       "args": [
-        "/absolute/path/to/your/project/unity-mcp/index.js"
-      ],
-      "env": {
-        "NODE_ENV": "production"
-      }
+        "/absolute/path/to/unity-mcp/index.js"
+      ]
     }
   }
 }
 ```
-**Note:** Replace `/absolute/path/to/your/project/` with the actual path.
 
-### 3. Install Unity Extension
+## Main tools
 
-1. Open your Unity project.
-2. Go to **Window** → **Package Manager**.
-3. Click **+** → **Install package from disk...**.
-4. Select `package.json` in `unity-mcp/tools/unity-bridge/unity-extension`.
+- `unity_health`: connectivity and bridge diagnostics.
+- `unity_list_scenes`: loaded scenes plus `DontDestroyOnLoad`.
+- `unity_find_objects`: lookup by name, path, component, tag, instance id.
+- `unity_inspect_object`: details for one object, with optional curated component values.
+- `unity_set_transform`, `unity_set_light`, `unity_set_camera`, `unity_set_active`: direct scene edits without snippets.
+- `unity_scene_hierarchy`: scoped hierarchy traversal.
+- `unity_scene_grep`: DSL query over the same scoped source.
+- `unity_scene_radius`: spatial query within the selected scope.
+- `unity_execute`: compile or execute a C# snippet inside the editor.
+- `unity_screenshot` and `unity_camera_screenshot`: visual verification, including existing camera capture.
 
-### 4. Start Unity Bridge
+## Notes
 
-1. In Unity Editor, open **Window** → **Unity Bridge**.
-2. Click **Start Server**.
-3. Ensure the server is running on port **7777**.
-
-## Usage Examples
-
-### Executing C# Code
-```javascript
-// Create a cube
-unity_execute({
-  code: `
-    var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-    cube.name = "AI_Generated_Cube";
-    cube.transform.position = new Vector3(0, 1, 0);
-    return "Cube created successfully";
-  `
-})
-```
-
-### Analyzing the Scene
-```javascript
-// Find all objects with name starting with "Player"
-unity_scene_hierarchy({
-  name_glob: "Player*"
-})
-```
-
-### System Diagnostics
-```javascript
-// Check system status
-terminal_system_info()
-```
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Unity Bridge not responding | Restart Unity Bridge Window (Stop/Start) |
-| MCP Server not loading | Check path in `.cursor/mcp.json` |
-| Compilation Errors | Use full namespaces (e.g., `UnityEngine.Object`) |
-| Port 7777 busy | Check running processes using `terminal_check_port(7777)` |
-
-## Architecture
-
-- **MCP Server (Node.js)**: Handles requests from the AI assistant.
-- **Unity Extension (C#)**: Runs inside Unity, executes commands, and returns results via HTTP (port 7777).
-
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+- Scene tools no longer silently search only the active scene unless `scope` is explicitly set that way.
+- `DontDestroyOnLoad` objects are discoverable without using `unity_execute`.
+- Errors now come back as regular diagnostic responses with structured `errorCode` values.

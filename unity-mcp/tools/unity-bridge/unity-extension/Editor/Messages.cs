@@ -4,8 +4,7 @@ using System.Collections.Generic;
 namespace UnityBridge
 {
     /// <summary>
-    /// Единые типы сообщений для Unity Bridge
-    /// Функциональный подход - immutable структуры
+    /// Shared message and operation result types for the Unity bridge.
     /// </summary>
     
     public struct UnityMessage
@@ -39,20 +38,22 @@ namespace UnityBridge
         public readonly string Message;
         public readonly object Data;
         public readonly string Error;
+        public readonly string ErrorCode;
         
-        public OperationResult(bool success, string message, object data = null, string error = null)
+        public OperationResult(bool success, string message, object data = null, string error = null, string errorCode = null)
         {
             Success = success;
             Message = message;
             Data = data;
             Error = error;
+            ErrorCode = errorCode;
         }
         
         public static OperationResult Ok(string message, object data = null) => 
             new OperationResult(true, message, data);
             
-        public static OperationResult Fail(string error) => 
-            new OperationResult(false, null, null, error);
+        public static OperationResult Fail(string error, string errorCode = null) => 
+            new OperationResult(false, null, null, error, errorCode);
     }
     
     public struct UnityRequest

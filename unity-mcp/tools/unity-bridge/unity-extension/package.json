@@ -2,7 +2,7 @@
   "name": "com.unity-bridge",
   "version": "1.0.0",
   "displayName": "Unity Bridge",
-  "description": "Революционный мост MCP к Unity Editor. Позволяет управлять Unity в реальном времени через MCP инструменты - создавать объекты, делать скриншоты, вызывать любые Unity API через рефлексию.",
+  "description": "HTTP bridge for Unity Editor tools used by the Unity MCP server.",
   "unity": "2022.3",
   "unityRelease": "0f1",
   "dependencies": {

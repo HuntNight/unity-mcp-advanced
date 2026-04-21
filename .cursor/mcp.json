@@ -3,11 +3,8 @@
       "unity-mcp": {
       "command": "node",
       "args": [
-        "/Users/nikitakolobov/Hunter/Unity3dProjects/TemplateCursor/unity-mcp/index.js"
-      ],
-      "env": {
-        "NODE_ENV": "production"
-      }
+        "/absolute/path/to/unity-mcp/index.js"
+      ]
     }
   }
 }

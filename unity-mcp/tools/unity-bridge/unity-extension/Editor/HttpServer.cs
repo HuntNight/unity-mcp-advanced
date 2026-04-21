@@ -9,16 +9,19 @@ using UnityEngine;
 namespace UnityBridge
 {
     /// <summary>
-    /// Простой HTTP сервер для Unity Bridge
-    /// Только HTTP логика - без бизнес-логики
+    /// Minimal HTTP server used by the Unity bridge.
     /// </summary>
     public class HttpServer
     {
         private readonly int port;
         private readonly Func<string, Dictionary<string, object>, Dictionary<string, object>> requestHandler;
+        private readonly List<string> prefixes = new List<string>();
         private HttpListener listener;
         private Thread listenerThread;
         private bool isRunning;
+
+        public bool IsRunning => isRunning && listener != null && listener.IsListening;
+        public IReadOnlyList<string> Prefixes => prefixes;
         
         public HttpServer(int port, Func<string, Dictionary<string, object>, Dictionary<string, object>> requestHandler)
         {
@@ -28,11 +31,14 @@ namespace UnityBridge
         
         public bool Start()
         {
+            var startErrors = new List<string>();
             try
             {
-                listener = new HttpListener();
-                listener.Prefixes.Add($"http://localhost:{port}/");
-                listener.Start();
+                if (!TryStartWithPrefixes(new[] { $"http://localhost:{port}/", $"http://127.0.0.1:{port}/" }, startErrors) &&
+                    !TryStartWithPrefixes(new[] { $"http://localhost:{port}/" }, startErrors))
+                {
+                    throw new InvalidOperationException(string.Join(" | ", startErrors));
+                }
                 
                 isRunning = true;
                 listenerThread = new Thread(ListenForRequests) 
@@ -47,6 +53,9 @@ namespace UnityBridge
             }
             catch (Exception ex)
             {
+                isRunning = false;
+                try { listener?.Close(); } catch { }
+                listener = null;
                 Debug.LogError($"Failed to start HTTP server: {ex.Message}");
                 return false;
             }
@@ -65,8 +74,6 @@ namespace UnityBridge
                 if (listenerThread?.IsAlive == true)
                 {
                     listenerThread.Join(1000);
-                    if (listenerThread.IsAlive)
-                        listenerThread.Abort();
                 }
                 
                 Debug.Log("HTTP Server stopped");
@@ -74,6 +81,45 @@ namespace UnityBridge
             catch (Exception ex)
             {
                 Debug.LogError($"Error stopping HTTP server: {ex.Message}");
+            }
+        }
+
+        private void AddPrefix(string prefix)
+        {
+            if (listener.Prefixes.Contains(prefix))
+                return;
+            listener.Prefixes.Add(prefix);
+            prefixes.Add(prefix);
+        }
+
+        private bool TryStartWithPrefixes(IEnumerable<string> requestedPrefixes, List<string> startErrors)
+        {
+            try
+            {
+                listener?.Close();
+            }
+            catch
+            {
+            }
+
+            listener = new HttpListener();
+            prefixes.Clear();
+
+            foreach (var prefix in requestedPrefixes)
+                AddPrefix(prefix);
+
+            try
+            {
+                listener.Start();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                startErrors.Add($"{string.Join(", ", requestedPrefixes)} => {ex.Message}");
+                try { listener.Close(); } catch { }
+                listener = null;
+                prefixes.Clear();
+                return false;
             }
         }
         
@@ -88,7 +134,6 @@ namespace UnityBridge
                 }
                 catch (HttpListenerException)
                 {
-                    // Сервер останавливается
                     if (!isRunning) return;
                 }
                 catch (Exception ex)
@@ -132,7 +177,7 @@ namespace UnityBridge
             catch (Exception ex)
             {
                 Debug.LogError($"Request processing error: {ex.Message}");
-                var errorResponse = ResponseBuilder.BuildErrorResponse($"Request processing failed: {ex.Message}");
+                var errorResponse = ResponseBuilder.BuildErrorResponse($"Request processing failed: {ex.Message}", Guid.NewGuid().ToString("N"), request.Url.AbsolutePath, 0);
                 SendJsonResponse(response, errorResponse, 500);
             }
         }
@@ -144,7 +189,6 @@ namespace UnityBridge
                 
             try
             {
-                // 🚀 Принудительно используем UTF-8 для корректной обработки кириллицы
                 using (var reader = new StreamReader(request.InputStream, Encoding.UTF8))
                 {
                     var body = reader.ReadToEnd();
@@ -167,7 +211,6 @@ namespace UnityBridge
                 var json = JsonUtils.ToJson(data);
                 var buffer = Encoding.UTF8.GetBytes(json);
                 
-                // 🚀 Поддержка UTF-8 кодировки для кириллицы
                 response.ContentType = "application/json; charset=utf-8";
                 response.ContentEncoding = Encoding.UTF8;
                 response.ContentLength64 = buffer.Length;
